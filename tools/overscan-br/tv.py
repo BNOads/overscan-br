@@ -14,8 +14,10 @@ Configuracao, em arquivos de uma linha ao lado deste script:
   tv_nome.txt   opcional, o nome com que este computador aparece na TV
 
 O "site" manda o endereco direto pro Overscan BR, pela porta 8081, com a chave.
-Se o Overscan BR estiver fechado, ele cai no plano B: abre o navegador da
-Samsung e espera voce selecionar a barra de endereco.
+Se o Overscan BR estiver fechado, ele abre o Overscan BR pelo lancador
+(app "Abrir Overscan BR", em tools/abrir-overscan-br) e espera ficar pronto.
+Sem o lancador, cai no plano B: abre o navegador da Samsung e espera voce
+selecionar a barra de endereco.
 
 Na primeira vez que usa o controle pela rede, a TV pergunta se pode deixar o Mac
 controlar. Aceite no controle.
@@ -29,6 +31,7 @@ import socket
 import ssl
 import struct
 import sys
+import time
 
 PASTA = os.path.dirname(os.path.abspath(__file__))
 ARQ_TOKEN = os.path.join(PASTA, "tv_token.txt")
@@ -187,6 +190,37 @@ def abrir_no_overscan(endereco):
     return True
 
 
+LANCADOR = "BNOadsAbre.AbrirOverscanBR"
+
+
+def overscan_aberto():
+    try:
+        with urllib.request.urlopen(f"http://{TV_IP}:8081/", timeout=3) as r:
+            return b"local build" in r.read(4096)
+    except OSError:
+        return False
+
+
+def abrir_overscan():
+    """Abre o Overscan BR pelo lancador web. Devolve True quando ele responde."""
+    pedido = urllib.request.Request(
+        f"http://{TV_IP}:8001/api/v2/applications/{LANCADOR}", method="POST")
+    try:
+        with urllib.request.urlopen(pedido, timeout=8) as r:
+            if r.read().strip() != b"true":
+                return False
+    except OSError:
+        return False
+    print("Abrindo o Overscan BR...")
+    for _ in range(25):
+        if overscan_aberto():
+            # Ele mostra a tela inicial primeiro; o endereco chega depois dela.
+            time.sleep(2)
+            return True
+        time.sleep(1)
+    return False
+
+
 def main():
     if not TV_IP:
         sys.exit("Falta o IP da TV: crie tv_ip.txt ao lado do tv.py (ou use TV_IP=...).")
@@ -195,6 +229,8 @@ def main():
     acao, valor = sys.argv[1], sys.argv[2]
     if acao == "site":
         if abrir_no_overscan(valor):
+            return
+        if abrir_overscan() and abrir_no_overscan(valor):
             return
         print("O Overscan BR nao respondeu. Plano B: navegador da Samsung.")
         abrir_app("org.tizen.browser")

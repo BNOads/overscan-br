@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Abrir Overscan BR</title>
+<style>
+html,body{margin:0;height:100%;background:#0b0d12;color:#eaeef6;font-family:'Samsung One',Arial,sans-serif}
+body{display:flex;align-items:center;justify-content:center;font-size:40px}
+</style></head>
+<body>Abrindo o Overscan BR…
+<script>
+/* Lançador do Overscan BR. A TV abre apps web pela rede (POST na porta 8001)
+   mas não abre o Overscan BR, que é um app .NET. Este app só existe para
+   ser aberto pela rede e abrir o Overscan BR, depois se fecha. */
+function sair() {
+  try { tizen.application.getCurrentApplication().exit(); } catch (e) {}
+}
+function erro(texto) {
+  document.body.textContent = 'Não consegui abrir o Overscan BR: ' + texto;
+  setTimeout(sair, 5000);
+}
+try {
+  tizen.application.launch('org.bnoads.overscanbr',
+    function () { setTimeout(sair, 800); },
+    function (e) { erro(e && e.message ? e.message : String(e)); });
+} catch (e) {
+  erro(e && e.message ? e.message : String(e));
+}
+</script>
+</body></html>

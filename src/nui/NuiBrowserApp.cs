@@ -102,6 +102,26 @@ namespace Overscan
         private volatile string _remoteOpen;
 
         /// <summary>
+        /// An action sent from the Mac panel to <c>:8081/acao</c>, queued the same
+        /// way as <see cref="_remoteOpen"/> and for the same reason.
+        /// </summary>
+        private volatile string _remoteAction;
+
+        /// <summary>What /acao accepts, and which menu action each name runs.</summary>
+        private static readonly Dictionary<string, string> RemoteActions = new Dictionary<string, string>
+        {
+            { "favbar", RemoteMenu.ActionFavouritesBar },
+            { "zoomin", RemoteMenu.ActionZoomIn },
+            { "zoomout", RemoteMenu.ActionZoomOut },
+            { "zoomreset", RemoteMenu.ActionZoomReset },
+            { "videofull", RemoteMenu.ActionVideoFullscreen },
+            { "home", RemoteMenu.ActionHome },
+            { "address", RemoteMenu.ActionAddress },
+            { "bookmark", RemoteMenu.ActionBookmark },
+            { "menu", "menu" },
+        };
+
+        /// <summary>
         /// Whether the page has a video stretched over it by
         /// <see cref="ToggleVideoFullscreen"/>. Back undoes that before it goes
         /// back a page, and every new load clears it, since the page that had
@@ -369,6 +389,7 @@ namespace Overscan
 
             DiagServer.OpenKey = RemoteOpenKey;
             DiagServer.OpenHandler = OnRemoteOpen;
+            DiagServer.ActionHandler = OnRemoteAction;
 
             if (!TryStartEngine())
             {
@@ -1054,6 +1075,7 @@ namespace Overscan
 
             CheckSomethingLoaded();
             TakeRemoteOpen();
+            TakeRemoteAction();
 
             // Here and not in the load callbacks, for the reason _zoomPending
             // gives. Between loads only: a page still loading is the engine
@@ -3338,6 +3360,51 @@ namespace Overscan
         {
             _remoteOpen = url;
             return "ok, abrindo " + url;
+        }
+
+        /// <summary>
+        /// Called by <see cref="DiagServer"/> on its own thread for /acao. Checks
+        /// the name against <see cref="RemoteActions"/> (a read-only table, safe
+        /// from any thread) and leaves it for <see cref="TakeRemoteAction"/>.
+        /// </summary>
+        private string OnRemoteAction(string id)
+        {
+            if (!RemoteActions.ContainsKey(id))
+            {
+                return "ação desconhecida: " + id;
+            }
+
+            _remoteAction = id;
+            return "ok, " + id;
+        }
+
+        private void TakeRemoteAction()
+        {
+            string id = _remoteAction;
+            if (id == null || _web == null)
+            {
+                return;
+            }
+
+            _remoteAction = null;
+            Breadcrumbs.Drop("action from the network: " + id);
+
+            // As if a key had been pressed: the panel is a remote, so a press
+            // from it wakes a sleeping fullscreen pointer like any other.
+            _lastPointerKey = DateTime.UtcNow;
+
+            if (id == "menu")
+            {
+                ShowMenu(!_menu.Visible);
+                return;
+            }
+
+            if (_keyboard.IsVisible)
+            {
+                _keyboard.Close();
+            }
+
+            RunAction(RemoteActions[id]);
         }
 
         private void TakeRemoteOpen()

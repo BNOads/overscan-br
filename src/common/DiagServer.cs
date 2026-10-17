@@ -42,6 +42,14 @@ namespace Overscan
         /// <summary>The word a request to /abrir must carry. Empty refuses them all.</summary>
         public static string OpenKey = string.Empty;
 
+        /// <summary>
+        /// Overscan BR: <c>GET /acao?chave=…&amp;id=…</c> runs one browser action
+        /// (favourites bar, zoom, fullscreen, menu…) for the Mac remote panel,
+        /// under the same two locks as /abrir. Called on this server's thread;
+        /// the handler only queues the action for the main one.
+        /// </summary>
+        public static Func<string, string> ActionHandler;
+
         public static void Start()
         {
             if (_thread != null)
@@ -115,24 +123,26 @@ namespace Overscan
         /// </summary>
         private static string TryOpen(string requestLine, TcpClient client)
         {
-            if (!requestLine.StartsWith("GET /abrir?", StringComparison.Ordinal))
+            bool open = requestLine.StartsWith("GET /abrir?", StringComparison.Ordinal);
+            bool action = requestLine.StartsWith("GET /acao?", StringComparison.Ordinal);
+            if (!open && !action)
             {
                 return null;
             }
 
-            Func<string, string> handler = OpenHandler;
+            Func<string, string> handler = open ? OpenHandler : ActionHandler;
             if (handler == null || string.IsNullOrEmpty(OpenKey))
             {
-                return "este navegador não abre páginas pela rede";
+                return "este navegador não aceita comandos pela rede";
             }
 
             if (!FromHomeNetwork(client))
             {
-                DiagLog.Add("abrir refused: not a private address");
+                DiagLog.Add((open ? "abrir" : "acao") + " refused: not a private address");
                 return "recusado: só aceito pedidos da rede de casa";
             }
 
-            string query = requestLine.Substring("GET /abrir?".Length);
+            string query = requestLine.Substring(requestLine.IndexOf('?') + 1);
             int space = query.IndexOf(' ');
             if (space >= 0)
             {
@@ -155,7 +165,7 @@ namespace Overscan
                 {
                     key = value;
                 }
-                else if (name == "url")
+                else if (name == (open ? "url" : "id"))
                 {
                     url = value;
                 }
@@ -163,13 +173,13 @@ namespace Overscan
 
             if (key != OpenKey)
             {
-                DiagLog.Add("abrir refused: wrong key");
+                DiagLog.Add((open ? "abrir" : "acao") + " refused: wrong key");
                 return "recusado: chave errada";
             }
 
             if (string.IsNullOrEmpty(url))
             {
-                return "faltou o endereço (url=...)";
+                return open ? "faltou o endereço (url=...)" : "faltou a ação (id=...)";
             }
 
             try

@@ -26,38 +26,38 @@ namespace Overscan
         public static string Build(IList<Bookmark> favourites, IList<Bookmark> history, string searchUrl)
         {
             var html = new StringBuilder();
-            html.Append(@"<!doctype html><html><head><meta charset='utf-8'>
-<title>Overscan</title><style>
+            html.Append(@"<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>
+<title>Overscan BR</title><style>
   *{box-sizing:border-box}
   body{margin:0;padding:56px 64px;background:#0b0d12;color:#eaeef6;
        font-family:'Samsung One','Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased}
-  h1{margin:0 0 4px;font-size:44px;font-weight:700;letter-spacing:-0.5px}
+  h1{margin:0 0 4px;font-size:58px;font-weight:700;letter-spacing:-0.5px}
   h1 span{color:#4894ff}
-  p.sub{margin:0 0 44px;color:#98a0b4;font-size:22px}
-  h2{margin:40px 0 18px;font-size:20px;font-weight:600;color:#4894ff;
+  p.sub{margin:0 0 44px;color:#98a0b4;font-size:30px}
+  h2{margin:40px 0 18px;font-size:27px;font-weight:600;color:#4894ff;
      text-transform:uppercase;letter-spacing:1.6px}
   .grid{display:flex;flex-wrap:wrap;margin:-10px}
-  a.tile{display:block;width:calc(25% - 20px);margin:10px;padding:22px 24px;
+  a.tile{display:block;width:calc(25% - 20px);margin:10px;padding:28px 28px;
          background:#171a22;border:2px solid #2b303c;border-radius:14px;
          text-decoration:none;color:#eaeef6;transition:all 120ms ease-out}
   a.tile:hover{background:#1f2431;border-color:#4894ff;transform:translateY(-2px)}
-  a.tile .host{display:block;font-size:26px;font-weight:600;overflow:hidden;
+  a.tile .host{display:block;font-size:35px;font-weight:600;overflow:hidden;
                 white-space:nowrap;text-overflow:ellipsis}
-  a.tile .name{display:block;margin-top:6px;font-size:18px;color:#98a0b4;
+  a.tile .name{display:block;margin-top:8px;font-size:24px;color:#98a0b4;
                 overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-  .empty{color:#6b7385;font-size:20px;padding:8px 2px 0}
+  .empty{color:#6b7385;font-size:27px;padding:8px 2px 0}
   .hint{margin-top:56px;padding-top:24px;border-top:2px solid #20242e;
-        color:#6b7385;font-size:19px;line-height:1.7}
+        color:#6b7385;font-size:25px;line-height:1.7}
   .hint b{color:#98a0b4;font-weight:600}
 </style></head><body>
-<h1>Over<span>scan</span></h1>
-<p class='sub'>The web, on the big screen.</p>
+<h1>Over<span>scan</span> BR</h1>
+<p class='sub'>A internet na tela grande.</p>
 ");
 
-            html.Append("<h2>Favourites</h2>");
+            html.Append("<h2>Favoritos</h2>");
             if (favourites.Count == 0)
             {
-                html.Append("<div class='empty'>Press <b>8</b> on any page to keep it here.</div>");
+                html.Append("<div class='empty'>Aperte <b>8</b> em qualquer página para guardar ela aqui.</div>");
             }
             else
             {
@@ -66,7 +66,7 @@ namespace Overscan
 
             if (history.Count > 0)
             {
-                html.Append("<h2>Recent</h2>");
+                html.Append("<h2>Recentes</h2>");
                 AppendGrid(html, history, 8, "recent");
             }
 
@@ -74,12 +74,11 @@ namespace Overscan
             // where the rest is. The remote card (7) is the surface that teaches
             // every key (issue #38); this is not a second copy of it.
             html.Append(@"<div class='hint'>
-<b>0</b> type an address &nbsp;·&nbsp; <b>7</b> the remote card — every key, and what it is for &nbsp;·&nbsp;
-<b>9</b> back to this screen &nbsp;·&nbsp; <b>channel up/down</b> scrolls, on every remote<br/>
-<b>8</b> on a tile removes it &nbsp;·&nbsp; on a page, keeps it here.<br/>
-Move the pointer with the D-pad and press OK to click. On the keyboard, <b>start</b>
-makes what you typed the page this browser opens on; press it with nothing typed
-to get this screen back.
+<b>vermelho</b> barra de favoritos &nbsp;·&nbsp; <b>verde / amarelo</b> letra maior / menor &nbsp;·&nbsp;
+<b>segurar OK</b> menu com tudo<br/>
+<b>0</b> digitar um endereço &nbsp;·&nbsp; <b>8</b> num quadro tira ele daqui; numa página, guarda ela &nbsp;·&nbsp;
+<b>9</b> volta para esta tela &nbsp;·&nbsp; <b>CH + / CH -</b> rolam a página<br/>
+Mova o ponteiro com as setas e aperte OK para clicar.
 </div></body></html>");
             return html.ToString();
         }

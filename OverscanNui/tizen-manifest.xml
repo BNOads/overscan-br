@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns="http://tizen.org/ns/packages" api-version="9.0" package="org.apps2samsung.overscan" version="0.2.0">
+<manifest xmlns="http://tizen.org/ns/packages" api-version="9.0" package="org.bnoads.overscanbr" version="1.0.3">
   <profile name="tv" />
-  <ui-application appid="org.apps2samsung.overscan"
+  <ui-application appid="org.bnoads.overscanbr"
                   exec="Overscan.dll"
                   type="dotnet"
                   multiple="false"
@@ -9,7 +9,7 @@
                   nodisplay="false"
                   launch_mode="single"
                   api-version="9.0">
-    <label>Overscan</label>
+    <label>Overscan BR</label>
     <icon>Overscan.png</icon>
     <splash-screens />
   </ui-application>

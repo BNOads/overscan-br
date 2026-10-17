@@ -93,6 +93,41 @@ namespace Overscan
             "XF86Red", "XF86ColorF0Red", "ColorF0Red",
         };
 
+        // Overscan BR gives red to the favourites bar (switching site moved into
+        // "Avançado") and the next two colours to the page zoom. Same caution as
+        // above: every plausible spelling, never verified on hardware, and the
+        // menu always has the same rows for a remote without these buttons.
+        public static readonly string[] ZoomInKeys =
+        {
+            "XF86Green", "XF86ColorF1Green", "ColorF1Green",
+        };
+
+        public static readonly string[] ZoomOutKeys =
+        {
+            "XF86Yellow", "XF86ColorF2Yellow", "ColorF2Yellow",
+        };
+
+        /// <summary>Blue: the playing video to the whole screen and back.</summary>
+        public static readonly string[] FullscreenKeys =
+        {
+            "XF86Blue", "XF86ColorF3Blue", "ColorF3Blue",
+        };
+
+        public static bool IsFullscreenKey(string key)
+        {
+            return Contains(FullscreenKeys, key);
+        }
+
+        public static bool IsZoomInKey(string key)
+        {
+            return Contains(ZoomInKeys, key);
+        }
+
+        public static bool IsZoomOutKey(string key)
+        {
+            return Contains(ZoomOutKeys, key);
+        }
+
         public const string ChannelUp = "XF86RaiseChannel";
         public const string ChannelDown = "XF86LowerChannel";
 

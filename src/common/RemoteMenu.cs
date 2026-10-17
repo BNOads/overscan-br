@@ -62,6 +62,17 @@ namespace Overscan
         public const string ActionHints = "hints";
         public const string ActionQuit = "quit";
 
+        // Overscan BR. The favourites bar and the page zoom are the two things the
+        // person this build is for reaches for most, and "Avançado" is where every
+        // row they never use went, so the first menu fits on screen at sofa size.
+        public const string ActionFavouritesBar = "favbar";
+        public const string ActionZoomIn = "zoomin";
+        public const string ActionZoomOut = "zoomout";
+        public const string ActionZoomReset = "zoomreset";
+        public const string ActionAdvanced = "advanced";
+        public const string ActionMainMenu = "mainmenu";
+        public const string ActionVideoFullscreen = "videofull";
+
         private readonly Item[] _items;
         private int _index;
 

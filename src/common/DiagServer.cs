@@ -31,6 +31,17 @@ namespace Overscan
         /// <summary>Set by the app so the report can include live state.</summary>
         public static Func<string> ReportProvider;
 
+        /// <summary>
+        /// Overscan BR: <c>GET /abrir?chave=…&amp;url=…</c> opens a page on the TV
+        /// from a Mac or phone on the same network. The handler is called on this
+        /// server's thread and must not touch the UI; null leaves the server
+        /// exactly as upstream, a report and nothing else.
+        /// </summary>
+        public static Func<string, string> OpenHandler;
+
+        /// <summary>The word a request to /abrir must carry. Empty refuses them all.</summary>
+        public static string OpenKey = string.Empty;
+
         public static void Start()
         {
             if (_thread != null)
@@ -56,19 +67,25 @@ namespace Overscan
                     using (TcpClient client = listener.AcceptTcpClient())
                     using (NetworkStream stream = client.GetStream())
                     {
+                        string requestLine = string.Empty;
                         try
                         {
-                            // Drain the request; the server has exactly one page.
+                            // Drain the request. Upstream has exactly one page; the
+                            // first line now also decides whether this is /abrir.
                             stream.ReadTimeout = 2000;
                             var scratch = new byte[2048];
-                            stream.Read(scratch, 0, scratch.Length);
+                            int read = stream.Read(scratch, 0, scratch.Length);
+                            string received = Encoding.UTF8.GetString(scratch, 0, Math.Max(0, read));
+                            int end = received.IndexOf('\r');
+                            requestLine = end < 0 ? received : received.Substring(0, end);
                         }
                         catch (Exception)
                         {
                             // A client that sends nothing still gets the report.
                         }
 
-                        byte[] payload = Encoding.UTF8.GetBytes(Report());
+                        string opened = TryOpen(requestLine, client);
+                        byte[] payload = Encoding.UTF8.GetBytes(opened ?? Report());
                         byte[] head = Encoding.UTF8.GetBytes(
                             "HTTP/1.0 200 OK\r\n" +
                             "Content-Type: text/plain; charset=utf-8\r\n" +
@@ -84,6 +101,116 @@ namespace Overscan
             catch (Exception ex)
             {
                 DiagLog.Add("diag server died: " + ex.GetType().Name + ": " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// The answer to an /abrir request, or null when the request is anything
+        /// else and the report should be served as always.
+        ///
+        /// Two locks, because this puts a page on somebody's television: the
+        /// request has to come from a private address (a home network, never the
+        /// internet even if a router forwards the port), and it has to carry
+        /// <see cref="OpenKey"/>.
+        /// </summary>
+        private static string TryOpen(string requestLine, TcpClient client)
+        {
+            if (!requestLine.StartsWith("GET /abrir?", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            Func<string, string> handler = OpenHandler;
+            if (handler == null || string.IsNullOrEmpty(OpenKey))
+            {
+                return "este navegador não abre páginas pela rede";
+            }
+
+            if (!FromHomeNetwork(client))
+            {
+                DiagLog.Add("abrir refused: not a private address");
+                return "recusado: só aceito pedidos da rede de casa";
+            }
+
+            string query = requestLine.Substring("GET /abrir?".Length);
+            int space = query.IndexOf(' ');
+            if (space >= 0)
+            {
+                query = query.Substring(0, space);
+            }
+
+            string key = null;
+            string url = null;
+            foreach (string pair in query.Split('&'))
+            {
+                int eq = pair.IndexOf('=');
+                if (eq <= 0)
+                {
+                    continue;
+                }
+
+                string name = pair.Substring(0, eq);
+                string value = Uri.UnescapeDataString(pair.Substring(eq + 1).Replace('+', ' '));
+                if (name == "chave")
+                {
+                    key = value;
+                }
+                else if (name == "url")
+                {
+                    url = value;
+                }
+            }
+
+            if (key != OpenKey)
+            {
+                DiagLog.Add("abrir refused: wrong key");
+                return "recusado: chave errada";
+            }
+
+            if (string.IsNullOrEmpty(url))
+            {
+                return "faltou o endereço (url=...)";
+            }
+
+            try
+            {
+                return handler(url);
+            }
+            catch (Exception ex)
+            {
+                return "não consegui abrir: " + ex.Message;
+            }
+        }
+
+        private static bool FromHomeNetwork(TcpClient client)
+        {
+            try
+            {
+                var remote = client.Client.RemoteEndPoint as IPEndPoint;
+                if (remote == null)
+                {
+                    return false;
+                }
+
+                IPAddress address = remote.Address;
+                if (address.IsIPv4MappedToIPv6)
+                {
+                    address = address.MapToIPv4();
+                }
+
+                byte[] b = address.GetAddressBytes();
+                if (b.Length != 4)
+                {
+                    return IPAddress.IsLoopback(address);
+                }
+
+                return b[0] == 10 || b[0] == 127 ||
+                       (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+                       (b[0] == 192 && b[1] == 168);
+            }
+            catch (Exception)
+            {
+                return false;
             }
         }
 

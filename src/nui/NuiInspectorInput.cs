@@ -77,6 +77,13 @@ namespace Overscan
         private static int _pendingX;
         private static int _pendingY;
 
+        /// <summary>
+        /// Overscan BR: the pending event is a bare move, not a click. See
+        /// <see cref="Move"/>. A click arriving after it replaces it, the same
+        /// latest-wins rule a second click follows.
+        /// </summary>
+        private static bool _pendingMoveOnly;
+
         /// <summary>What happened to the last click, for the diagnostics screen.</summary>
         public static string LastResult
         {
@@ -121,6 +128,38 @@ namespace Overscan
                 _pending = true;
                 _pendingX = x;
                 _pendingY = y;
+                _pendingMoveOnly = false;
+            }
+
+            EnsureWorker();
+            Wake.Set();
+            return true;
+        }
+
+        /// <summary>
+        /// Overscan BR: moves the engine's pointer to a point without pressing.
+        ///
+        /// For the fullscreen video. After the click that started a player in
+        /// another site's frame, that player believes the mouse is still where
+        /// the click was, which is usually its own control bar, and a player
+        /// keeps its controls up while the mouse rests on them. Moving the
+        /// pointer to the middle of the picture is what lets the player's own
+        /// idle timer put them away. Only when the inspector is already up from
+        /// that click: this never starts one.
+        /// </summary>
+        public static bool Move(int x, int y)
+        {
+            if (NuiInspector.Port == 0)
+            {
+                return false;
+            }
+
+            lock (Sync)
+            {
+                _pending = true;
+                _pendingX = x;
+                _pendingY = y;
+                _pendingMoveOnly = true;
             }
 
             EnsureWorker();
@@ -168,6 +207,7 @@ namespace Overscan
 
                 int x;
                 int y;
+                bool moveOnly;
 
                 lock (Sync)
                 {
@@ -178,6 +218,7 @@ namespace Overscan
 
                     x = _pendingX;
                     y = _pendingY;
+                    moveOnly = _pendingMoveOnly;
                     _pending = false;
                 }
 
@@ -194,7 +235,7 @@ namespace Overscan
                     {
                         bool reused;
                         ClientWebSocket socket = Connect(out reused);
-                        if (socket == null || Send(socket, x, y) || !reused)
+                        if (socket == null || Send(socket, x, y, moveOnly) || !reused)
                         {
                             break;
                         }
@@ -520,11 +561,11 @@ namespace Overscan
         /// press to a point the engine has never seen a pointer at is the one way
         /// this differs from a person doing it.
         /// </summary>
-        private static bool Send(ClientWebSocket socket, int x, int y)
+        private static bool Send(ClientWebSocket socket, int x, int y, bool moveOnly)
         {
             try
             {
-                return Dispatch(socket, x, y);
+                return Dispatch(socket, x, y, moveOnly);
             }
             catch (Exception ex)
             {
@@ -534,7 +575,7 @@ namespace Overscan
         }
 
         /// <summary>Move, press, release — see <see cref="Send"/>.</summary>
-        private static bool Dispatch(ClientWebSocket socket, int x, int y)
+        private static bool Dispatch(ClientWebSocket socket, int x, int y, bool moveOnly)
         {
             string moved = Call(socket,
                 "Input.dispatchMouseEvent",
@@ -546,6 +587,19 @@ namespace Overscan
             {
                 Drop("move rejected — " + moved);
                 return false;
+            }
+
+            if (moveOnly)
+            {
+                // Recorded as a success, but not as a click: Succeeded is what
+                // the click path reads to decide whether to say a frame could not
+                // be clicked, and a move is not an answer to that question.
+                lock (Sync)
+                {
+                    _lastResult = "moved to " + x + "," + y;
+                }
+
+                return true;
             }
 
             string pressed = Call(socket,

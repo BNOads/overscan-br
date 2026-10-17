@@ -5,7 +5,7 @@ namespace Overscan
 {
     internal static class NuiProgram
     {
-        private const string PackageId = "org.apps2samsung.overscan";
+        private const string PackageId = "org.bnoads.overscanbr";
 
         private static void Main(string[] args)
         {

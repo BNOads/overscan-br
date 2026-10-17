@@ -54,6 +54,79 @@ namespace Overscan
         private TextLabel[] _menuShortcuts;
         private View _menuHighlight;
 
+        /// <summary>
+        /// Overscan BR has two menus, the short one and "Avançado". Both are built
+        /// once and swapped in by <see cref="UseMenu"/>, so the five fields above
+        /// always describe whichever one is on screen and none of the code that
+        /// reads them had to learn there are two.
+        /// </summary>
+        private sealed class MenuSet
+        {
+            public RemoteMenu Menu;
+            public View Panel;
+            public TextLabel[] Labels;
+            public TextLabel[] Shortcuts;
+            public View Highlight;
+            public int RowHeight;
+        }
+
+        private MenuSet _mainMenu;
+        private MenuSet _advancedMenu;
+
+        private NuiFavouritesBar _favBar;
+
+        /// <summary>
+        /// The page zoom on the view right now, in percent. Remembered per site
+        /// under <c>zoom:&lt;site&gt;</c>, so the size somebody picked for a news
+        /// site comes back every time they open it.
+        /// </summary>
+        private int _zoomPercent = 100;
+
+        /// <summary>
+        /// A zoom chosen but not yet handed to the engine. Set from the load
+        /// callbacks and the zoom keys, carried out by <see cref="OnTick"/> once
+        /// no load is running. Never from inside a PageLoadStarted or
+        /// PageLoadFinished notification: the first build did exactly that, and
+        /// the TV froze on every launch once a zoom other than 100% was stored,
+        /// the same re-entry ApplyVideoPath and ApplySiteRules already keep away
+        /// from.
+        /// </summary>
+        private bool _zoomPending;
+        private static readonly int[] ZoomSteps = { 80, 90, 100, 110, 125, 150, 175, 200, 250 };
+
+        /// <summary>
+        /// An address sent from the Mac to <c>:8081/abrir</c>. Written on
+        /// DiagServer's thread, read and cleared by <see cref="OnTick"/> on the main
+        /// one, because DALi and the web view may only be touched from there.
+        /// </summary>
+        private volatile string _remoteOpen;
+
+        /// <summary>
+        /// Whether the page has a video stretched over it by
+        /// <see cref="ToggleVideoFullscreen"/>. Back undoes that before it goes
+        /// back a page, and every new load clears it, since the page that had
+        /// the stretched video is gone.
+        /// </summary>
+        private bool _videoFull;
+
+        /// <summary>
+        /// Overscan BR: in fullscreen the pointer goes away after a few seconds
+        /// without a pointer key, the way a desktop player hides the mouse, and
+        /// takes the page's own video controls with it. The first arrow or OK
+        /// after that only brings it back, so waking the pointer can never be
+        /// the click that pauses the match.
+        /// </summary>
+        private bool _pointerIdleHidden;
+        private DateTime _lastPointerKey = DateTime.UtcNow;
+        private const int PointerIdleSeconds = 3;
+
+        /// <summary>
+        /// What a request to <c>:8081/abrir</c> has to carry. Without it anybody on
+        /// the home network could put any page on this TV; with it only the Mac
+        /// holding the same word in <c>tv.py</c> can.
+        /// </summary>
+        private const string RemoteOpenKey = "96314a0ecfbd6bb216dcab92";
+
         private UserAgentPreset[] _presets = UserAgents.Defaults();
         private int _presetIndex;
         private string _engineUserAgentRaw;
@@ -278,20 +351,28 @@ namespace Overscan
             // afterwards silently threw the user's layout choice away.
             Store.Init(DirectoryInfo.Data);
             SiteRules.Init(DirectoryInfo.Data);
+            SeedFavourites();
 
             BuildChrome();
             BuildOverlay();
             BuildHints();
             BuildMenu();
 
+            _favBar = new NuiFavouritesBar(_window);
+            _favBar.Chosen += OnFavouriteChosen;
+            _favBar.KeepRequested += OnFavouritesBarKeep;
+
             _keyboard = new NuiKeyboard(_window);
             _keyboard.Committed += OnKeyboardCommitted;
             _keyboard.StartPageSet += OnStartPageSet;
             _window.KeyEvent += OnWindowKey;
 
+            DiagServer.OpenKey = RemoteOpenKey;
+            DiagServer.OpenHandler = OnRemoteOpen;
+
             if (!TryStartEngine())
             {
-                _status.Text = "web engine failed — press 3";
+                _status.Text = "o navegador não iniciou, aperte 3";
                 ShowOverlay(true);
                 return;
             }
@@ -431,7 +512,9 @@ namespace Overscan
                 PassTouchesThrough(_progress);
                 PassTouchesThrough(_overlay);
                 PassTouchesThrough(_hints);
-                PassTouchesThrough(_menuPanel);
+                PassTouchesThrough(_mainMenu.Panel);
+                PassTouchesThrough(_advancedMenu.Panel);
+                PassTouchesThrough(_favBar.Root);
 
                 // Insurance for the frame-click path: the toolkit gates part of its
                 // pointer forwarding on this, and the default is not worth guessing.
@@ -520,12 +603,19 @@ namespace Overscan
                     NoteShowing(SafeUrl());
                     ApplySiteRules(SafeUrl(), true);
 
+                    // Overscan BR: only works out which zoom this site wants.
+                    // Handing it to the engine waits for the tick after the load,
+                    // see _zoomPending.
+                    ApplyZoom();
+
                     EngineAnswered();
                     ShowChrome();
 
                     // Whatever needed a debugging port, this is not it any more.
                     // See NuiInspector.Stop: the window it is open for should be
                     // the captcha, not the evening.
+                    _videoFull = false;
+                    WakePointer();
                     NuiInspectorInput.Reset();
                     NuiInspector.Stop(_web);
                     NuiMediaWatch.Reset();
@@ -551,6 +641,7 @@ namespace Overscan
                     ApplyViewportFix();
                     Store.RecordVisit(SafeUrl(), SafeTitle());
                     NoteShowing(SafeUrl());
+                    ApplyZoom();
 
                     // Backstop, for a load whose start we somehow missed. Normally
                     // a no-op: the site is already the applied one by now.
@@ -576,7 +667,7 @@ namespace Overscan
                     Breadcrumbs.Drop("load error on " + why);
                     if (_proxyOn)
                     {
-                        Flash("Could not load this page through the proxy. Is the proxy answering?");
+                        Flash("Esta página não abriu pelo proxy. O proxy está respondendo?");
                     }
                     UpdateStatus();
                 };
@@ -849,34 +940,42 @@ namespace Overscan
 
             // Two labels rather than markup: the host has to read from the sofa, the
             // rest of the URL only has to be present.
+            // Overscan BR: all three centred on the bar's height rather than placed
+            // by hand at the upstream sizes, so the larger text cannot sit low.
             _host = new TextLabel
             {
-                Position2D = new Position2D(NuiTheme.Pad, 14),
-                Size2D = new Size2D(screen.Width / 3, NuiTheme.BarHeight - 24),
-                PointSize = 15,
+                Position2D = new Position2D(NuiTheme.Pad, 0),
+                Size2D = new Size2D(screen.Width / 3, NuiTheme.BarHeight),
+                PointSize = NuiTheme.Pt(15),
                 TextColor = NuiTheme.Ink,
-                Text = "Overscan",
+                VerticalAlignment = VerticalAlignment.Center,
+                Ellipsis = true,
+                Text = "Overscan BR",
             };
             _bar.Add(_host);
 
             _path = new TextLabel
             {
-                Position2D = new Position2D(NuiTheme.Pad + (screen.Width / 3) + 12, 20),
-                Size2D = new Size2D(screen.Width / 4, NuiTheme.BarHeight - 28),
-                PointSize = 11,
+                Position2D = new Position2D(NuiTheme.Pad + (screen.Width / 3) + 12, 0),
+                Size2D = new Size2D(screen.Width / 4, NuiTheme.BarHeight),
+                PointSize = NuiTheme.Pt(11),
                 TextColor = NuiTheme.InkMuted,
+                VerticalAlignment = VerticalAlignment.Center,
+                Ellipsis = true,
                 Text = string.Empty,
             };
             _bar.Add(_path);
 
             _status = new TextLabel
             {
-                Position2D = new Position2D(screen.Width - (screen.Width / 3) - NuiTheme.Pad, 20),
-                Size2D = new Size2D(screen.Width / 3, NuiTheme.BarHeight - 28),
-                PointSize = 11,
+                Position2D = new Position2D(screen.Width - (screen.Width / 3) - NuiTheme.Pad, 0),
+                Size2D = new Size2D(screen.Width / 3, NuiTheme.BarHeight),
+                PointSize = NuiTheme.Pt(11),
                 TextColor = NuiTheme.InkMuted,
                 HorizontalAlignment = HorizontalAlignment.End,
-                Text = "starting…",
+                VerticalAlignment = VerticalAlignment.Center,
+                Ellipsis = true,
+                Text = "abrindo…",
             };
             _bar.Add(_status);
 
@@ -954,6 +1053,21 @@ namespace Overscan
             }
 
             CheckSomethingLoaded();
+            TakeRemoteOpen();
+
+            // Here and not in the load callbacks, for the reason _zoomPending
+            // gives. Between loads only: a page still loading is the engine
+            // still busy with the navigation the zoom would land in.
+            if (_zoomPending && !_loading)
+            {
+                PushZoom();
+            }
+
+            if (_videoFull && !_pointerIdleHidden && !_menu.Visible && !_keyboard.IsVisible &&
+                DateTime.UtcNow - _lastPointerKey > TimeSpan.FromSeconds(PointerIdleSeconds))
+            {
+                SleepPointer();
+            }
 
             // The bar is read from a cache that only a finished load refreshes, and
             // a site that moves between pages without finishing one (a reel, a
@@ -969,7 +1083,8 @@ namespace Overscan
             // alive: arrowing through the menu is pointer keys, and without this the
             // chrome would time out underneath an open menu.
             bool busy = _loading || _keyboard.IsVisible || _overlayVisible ||
-                        (_menu != null && _menu.Visible);
+                        (_menu != null && _menu.Visible) ||
+                        (_favBar != null && _favBar.IsVisible);
             if (_chromeVisible && !busy && DateTime.UtcNow - _lastActivity > TimeSpan.FromSeconds(4))
             {
                 HideChrome();
@@ -1045,13 +1160,13 @@ namespace Overscan
             if (rung == 1)
             {
                 _blankState = "start screen would not load — shown without its tiles";
-                Flash("The start screen would not load — showing it without your tiles");
+                Flash("A tela inicial não abriu. Mostrando sem os seus quadros");
             }
             else if (rung == 2)
             {
                 _blankState = (startScreen ? "bare start screen" : "no load") +
                               " would not load either — rebuilt the view";
-                Flash("Nothing loaded — starting the browser engine over");
+                Flash("Nada carregou. Reiniciando o motor do navegador");
                 if (!RebuildWebView())
                 {
                     return;
@@ -1060,7 +1175,7 @@ namespace Overscan
             else if (rung == 3)
             {
                 _blankState = "still nothing after a rebuild — cleared the session and rebuilt";
-                Flash("Still nothing — clearing saved sign-ins and trying once more");
+                Flash("Ainda nada. Limpando os logins salvos e tentando de novo");
                 ClearStoredSession();
                 if (!RebuildWebView())
                 {
@@ -1074,7 +1189,7 @@ namespace Overscan
                 // *this* load will not begin, so that is what gets said.
                 _blankState = "the web view is not starting this load";
                 Breadcrumbs.Drop(_blankState);
-                Flash("This will not load. Try typing an address (0). Report at http://<this TV>:8081");
+                Flash("Esta página não carrega. Tente digitar um endereço (0)");
                 return;
             }
 
@@ -1186,7 +1301,7 @@ namespace Overscan
             if (!TryStartEngine())
             {
                 _blankState = "rebuild failed — " + (_engineFailure ?? "no engine");
-                Flash("The browser engine will not start. Press 3.");
+                Flash("O motor do navegador não inicia. Aperte 3.");
                 return false;
             }
 
@@ -1314,22 +1429,22 @@ namespace Overscan
         /// here the user can act on, and a list that opens with nine things they
         /// cannot do reads as "this app is not for your remote" (issue #27).
         /// </summary>
+        /// <remarks>
+        /// Overscan BR keeps only the rows somebody uses every evening. At the
+        /// larger text size all fourteen upstream rows made a card taller than
+        /// most of the screen, and the rest are in the menu anyway, each with its
+        /// key beside it.
+        /// </remarks>
         private static readonly string[][] RemoteRows =
         {
-            new[] { "hold OK", "menu — every action, on any remote" },
-            new[] { "Ch up/down", "scroll a page" },
-            new[] { "0", "type an address" },
-            new[] { "A / red", "switch to the site you were just on" },
-            new[] { "1", "identify as… — kept for this site" },
-            new[] { "2", "type in the field you clicked" },
-            new[] { "3", "diagnostics — the report at :8081" },
-            new[] { "4", "keys to page — when a search box is dead" },
-            new[] { "5", "video: TV overlay / in page — if black" },
-            new[] { "6", "fit page — when the page is cut off" },
-            new[] { "7", "hide this card" },
-            new[] { "8", "keep this page — on the start screen, remove a tile" },
-            new[] { "9", "start screen" },
-            new[] { "Info", "images off — kept for this site" },
+            new[] { "segurar OK", "menu com todas as opções" },
+            new[] { "CH + / CH -", "rolar a página" },
+            new[] { "vermelho", "barra de favoritos" },
+            new[] { "verde / amarelo", "letra maior / menor" },
+            new[] { "0", "digitar um endereço" },
+            new[] { "8", "guardar nos favoritos" },
+            new[] { "9", "tela inicial" },
+            new[] { "7", "esconder este cartão" },
         };
 
         /// <summary>
@@ -1342,13 +1457,16 @@ namespace Overscan
         private void BuildHints()
         {
             Size2D screen = _window.WindowSize;
-            int width = 640;
+            int width = NuiTheme.Px(620);
+            int rowHeight = NuiTheme.Px(42);
+            int keyWidth = NuiTheme.Px(170);
+            int header = NuiTheme.Px(52);
 
-            // Title, one 42px row per key, then a row's worth of clearance for the
+            // Title, one row per key, then a row's worth of clearance for the
             // unrecognised-button line that sits on the bottom edge. Derived rather
             // than a constant, because a card that grows by a key and not by a row
             // draws the last key on top of that line.
-            int height = NuiTheme.Pad + 52 + ((RemoteRows.Length + 1) * 42) + NuiTheme.Pad;
+            int height = NuiTheme.Pad + header + ((RemoteRows.Length + 1) * rowHeight) + NuiTheme.Pad;
 
             _hints = new View
             {
@@ -1361,10 +1479,10 @@ namespace Overscan
             var title = new TextLabel
             {
                 Position2D = new Position2D(NuiTheme.Pad, NuiTheme.Pad),
-                Size2D = new Size2D(width - (NuiTheme.Pad * 2), 34),
-                PointSize = 12,
+                Size2D = new Size2D(width - (NuiTheme.Pad * 2), NuiTheme.Px(34)),
+                PointSize = NuiTheme.Pt(12),
                 TextColor = NuiTheme.Accent,
-                Text = "REMOTE",
+                Text = "CONTROLE",
             };
             _hints.Add(title);
 
@@ -1372,20 +1490,20 @@ namespace Overscan
 
             for (int i = 0; i < rows.Length; i++)
             {
-                int y = NuiTheme.Pad + 52 + (i * 42);
+                int y = NuiTheme.Pad + header + (i * rowHeight);
                 _hints.Add(new TextLabel
                 {
                     Position2D = new Position2D(NuiTheme.Pad, y),
-                    Size2D = new Size2D(150, 38),
-                    PointSize = 13,
+                    Size2D = new Size2D(keyWidth, rowHeight - 4),
+                    PointSize = NuiTheme.Pt(12),
                     TextColor = NuiTheme.Ink,
                     Text = rows[i][0],
                 });
                 _hints.Add(new TextLabel
                 {
-                    Position2D = new Position2D(NuiTheme.Pad + 150, y + 3),
-                    Size2D = new Size2D(width - NuiTheme.Pad - 170, 34),
-                    PointSize = 11,
+                    Position2D = new Position2D(NuiTheme.Pad + keyWidth, y + 3),
+                    Size2D = new Size2D(width - NuiTheme.Pad - keyWidth - 20, rowHeight - 8),
+                    PointSize = NuiTheme.Pt(11),
                     TextColor = NuiTheme.InkMuted,
                     Text = rows[i][1],
                 });
@@ -1397,9 +1515,9 @@ namespace Overscan
             // number key too. So the name lands here, on the card they can see.
             _hintsFooter = new TextLabel
             {
-                Position2D = new Position2D(NuiTheme.Pad, height - NuiTheme.Pad - 30),
-                Size2D = new Size2D(width - (NuiTheme.Pad * 2), 28),
-                PointSize = 9,
+                Position2D = new Position2D(NuiTheme.Pad, height - NuiTheme.Pad - NuiTheme.Px(30)),
+                Size2D = new Size2D(width - (NuiTheme.Pad * 2), NuiTheme.Px(28)),
+                PointSize = NuiTheme.Pt(9),
                 TextColor = NuiTheme.InkMuted,
                 Text = string.Empty,
             };
@@ -1426,50 +1544,81 @@ namespace Overscan
         /// <summary>
         /// The on-screen menu: every function this browser has, in a list the
         /// D-pad can walk. It exists for remotes without a numpad (issue #27),
-        /// where it is the only way in, and it shows each entry's number key
-        /// beside it so it also teaches the shortcut to anyone who has one.
+        /// where it is the only way in, and it shows each entry's key beside it so
+        /// it also teaches the shortcut to anyone who has one.
         /// </summary>
+        /// <remarks>
+        /// Overscan BR splits it in two. Upstream's twenty-one rows only fitted a
+        /// 1080-line screen by shrinking every row, which is the opposite of what
+        /// this build is for, so the first menu holds what gets used every evening
+        /// and "Avançado" holds the rest, untouched. Both are built here, once.
+        /// </remarks>
         private void BuildMenu()
         {
-            _menu = new RemoteMenu(new[]
+            _mainMenu = BuildMenuSet("MENU", new[]
             {
-                new RemoteMenu.Item(RemoteMenu.ActionAddress, "Go to address…", "0"),
-                new RemoteMenu.Item(RemoteMenu.ActionSwitchSite, "Switch site", "A"),
-                new RemoteMenu.Item(RemoteMenu.ActionHome, "Start screen", "9"),
-                new RemoteMenu.Item(RemoteMenu.ActionBookmark, "Keep this page", "8"),
-                new RemoteMenu.Item(RemoteMenu.ActionKeepAddress, "Keep an address…", string.Empty),
-                new RemoteMenu.Item(RemoteMenu.ActionResumeLast, "Open where I left off", string.Empty),
-                new RemoteMenu.Item(RemoteMenu.ActionTypeInField, "Type in a field…", "2"),
-                new RemoteMenu.Item(RemoteMenu.ActionIdentity, "Identify as…", "1"),
-                new RemoteMenu.Item(RemoteMenu.ActionKeysToPage, "Send keys to page", "4"),
-                new RemoteMenu.Item(RemoteMenu.ActionFitPage, "Fit page to screen", "6"),
-                new RemoteMenu.Item(RemoteMenu.ActionImages, "Images on/off", "Info"),
-                new RemoteMenu.Item(RemoteMenu.ActionAdBlock, "Ad blocking on/off", string.Empty),
-                new RemoteMenu.Item(RemoteMenu.ActionOneVideo, "One video at a time on/off", string.Empty),
-                new RemoteMenu.Item(RemoteMenu.ActionProxy, "Proxy on/off", string.Empty),
-                new RemoteMenu.Item(RemoteMenu.ActionProxyAddress, "Proxy address…", string.Empty),
-                new RemoteMenu.Item(RemoteMenu.ActionForgetSite, "Forget this site's settings", string.Empty),
-                new RemoteMenu.Item(RemoteMenu.ActionVideoPath, "Video: in page / overlay", "5"),
-                new RemoteMenu.Item(RemoteMenu.ActionPointer, "Pointer style", string.Empty),
-                new RemoteMenu.Item(RemoteMenu.ActionHints, "Remote card on/off", "7"),
-                new RemoteMenu.Item(RemoteMenu.ActionDiagnostics, "Diagnostics", "3"),
-                new RemoteMenu.Item(RemoteMenu.ActionQuit, "Close Overscan", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionFavouritesBar, "Favoritos", "vermelho"),
+                new RemoteMenu.Item(RemoteMenu.ActionAddress, "Ir para um endereço…", "0"),
+                new RemoteMenu.Item(RemoteMenu.ActionBookmark, "Guardar esta página", "8"),
+                new RemoteMenu.Item(RemoteMenu.ActionHome, "Tela inicial", "9"),
+                new RemoteMenu.Item(RemoteMenu.ActionZoomIn, "Letra maior", "verde"),
+                new RemoteMenu.Item(RemoteMenu.ActionZoomOut, "Letra menor", "amarelo"),
+                new RemoteMenu.Item(RemoteMenu.ActionZoomReset, "Letra no tamanho normal", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionVideoFullscreen, "Vídeo em tela cheia", "azul"),
+                new RemoteMenu.Item(RemoteMenu.ActionTypeInField, "Digitar no campo clicado…", "2"),
+                new RemoteMenu.Item(RemoteMenu.ActionAdBlock, "Bloquear anúncios: liga/desliga", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionAdvanced, "Avançado…", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionQuit, "Fechar o navegador", string.Empty),
             });
 
+            _advancedMenu = BuildMenuSet("AVANÇADO", new[]
+            {
+                new RemoteMenu.Item(RemoteMenu.ActionMainMenu, "‹ Voltar ao menu", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionKeepAddress, "Guardar um endereço digitado…", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionSwitchSite, "Trocar de site", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionResumeLast, "Abrir onde parei: liga/desliga", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionImages, "Imagens: liga/desliga", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionFitPage, "Ajustar a página à tela", "6"),
+                new RemoteMenu.Item(RemoteMenu.ActionKeysToPage, "Mandar as teclas para a página", "4"),
+                new RemoteMenu.Item(RemoteMenu.ActionIdentity, "Abrir como outro navegador…", "1"),
+                new RemoteMenu.Item(RemoteMenu.ActionVideoPath, "Vídeo: na página / da TV", "5"),
+                new RemoteMenu.Item(RemoteMenu.ActionOneVideo, "Um vídeo por vez: liga/desliga", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionProxy, "Proxy: liga/desliga", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionProxyAddress, "Endereço do proxy…", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionForgetSite, "Esquecer os ajustes deste site", string.Empty),
+                new RemoteMenu.Item(RemoteMenu.ActionHints, "Cartão do controle: mostra/esconde", "7"),
+                new RemoteMenu.Item(RemoteMenu.ActionDiagnostics, "Diagnóstico", "3"),
+            });
+
+            UseMenu(_mainMenu);
+        }
+
+        private MenuSet BuildMenuSet(string heading, RemoteMenu.Item[] items)
+        {
+            var set = new MenuSet { Menu = new RemoteMenu(items) };
             Size2D screen = _window.WindowSize;
 
-            // Rows shrink rather than run off the screen. At 62 the list stopped
-            // fitting a 1080-line window somewhere around the sixteenth entry, and
-            // a row past the bottom edge is still picked out by the highlight, so
-            // the menu would have been choosing things nobody could read.
-            int room = screen.Height - (NuiTheme.Pad * 4) - 56 - 44;
-            _menuRowHeight = Math.Max(40, Math.Min(62, room / _menu.Count));
-            int rowHeight = _menuRowHeight;
-            int labelSize = rowHeight >= 56 ? 15 : 13;
-            int width = 720;
-            int height = (NuiTheme.Pad * 2) + 56 + (_menu.Count * rowHeight) + 44;
+            int header = NuiTheme.Px(56);
+            int footer = NuiTheme.Px(44);
+            int shortcutWidth = NuiTheme.Px(150);
 
-            _menuPanel = new View
+            // Rows shrink rather than run off the screen. A row past the bottom
+            // edge is still picked out by the highlight, so the menu would be
+            // choosing things nobody could read. The floor is the label's own
+            // height: below it the text would be clipped instead.
+            // A long menu drops to the smaller of the two upstream text sizes
+            // before its rows are allowed to get shorter than that text.
+            int room = screen.Height - (NuiTheme.Pad * 4) - header - footer;
+            int fit = room / set.Menu.Count;
+            bool big = fit >= NuiTheme.Px(56);
+            int labelSize = big ? 15 : 13;
+            int floor = NuiTheme.Px(big ? 42 : 36) + 6;
+            set.RowHeight = Math.Max(floor, Math.Min(NuiTheme.Px(62), fit));
+            int rowHeight = set.RowHeight;
+            int width = NuiTheme.Px(760);
+            int height = (NuiTheme.Pad * 2) + header + (set.Menu.Count * rowHeight) + footer;
+
+            set.Panel = new View
             {
                 Position2D = new Position2D((screen.Width - width) / 2, (screen.Height - height) / 2),
                 Size2D = new Size2D(width, height),
@@ -1477,72 +1626,100 @@ namespace Overscan
                 CornerRadius = NuiTheme.Radius,
             };
 
-            _menuPanel.Add(new TextLabel
+            set.Panel.Add(new TextLabel
             {
                 Position2D = new Position2D(NuiTheme.Pad, NuiTheme.Pad),
-                Size2D = new Size2D(width - (NuiTheme.Pad * 2), 36),
-                PointSize = 13,
+                Size2D = new Size2D(width - (NuiTheme.Pad * 2), NuiTheme.Px(36)),
+                PointSize = NuiTheme.Pt(13),
                 TextColor = NuiTheme.Accent,
-                Text = "MENU",
+                Text = heading,
             });
 
             // Behind the rows, so a row's own text is never covered by it.
-            _menuHighlight = new View
+            set.Highlight = new View
             {
-                Position2D = new Position2D(NuiTheme.Pad - 8, NuiTheme.Pad + 56),
+                Position2D = new Position2D(NuiTheme.Pad - 8, NuiTheme.Pad + header),
                 Size2D = new Size2D(width - (NuiTheme.Pad * 2) + 16, rowHeight - 6),
                 BackgroundColor = NuiTheme.Accent,
                 CornerRadius = 8f,
             };
-            _menuPanel.Add(_menuHighlight);
+            set.Panel.Add(set.Highlight);
 
-            _menuLabels = new TextLabel[_menu.Count];
-            _menuShortcuts = new TextLabel[_menu.Count];
+            set.Labels = new TextLabel[set.Menu.Count];
+            set.Shortcuts = new TextLabel[set.Menu.Count];
 
-            for (int i = 0; i < _menu.Count; i++)
+            for (int i = 0; i < set.Menu.Count; i++)
             {
-                RemoteMenu.Item item = _menu.ItemAt(i);
-                int y = NuiTheme.Pad + 56 + (i * rowHeight);
+                RemoteMenu.Item item = set.Menu.ItemAt(i);
+                int y = NuiTheme.Pad + header + (i * rowHeight);
 
-                _menuLabels[i] = new TextLabel
+                set.Labels[i] = new TextLabel
                 {
-                    Position2D = new Position2D(NuiTheme.Pad, y + ((rowHeight - 6 - 42) / 2)),
-                    Size2D = new Size2D(width - (NuiTheme.Pad * 2) - 140, 42),
-                    PointSize = labelSize,
+                    Position2D = new Position2D(NuiTheme.Pad, y),
+                    Size2D = new Size2D(width - (NuiTheme.Pad * 2) - shortcutWidth, rowHeight - 6),
+                    PointSize = NuiTheme.Pt(labelSize),
                     TextColor = NuiTheme.Ink,
+                    VerticalAlignment = VerticalAlignment.Center,
                     Text = item.Label,
                 };
-                _menuPanel.Add(_menuLabels[i]);
+                set.Panel.Add(set.Labels[i]);
 
-                _menuShortcuts[i] = new TextLabel
+                set.Shortcuts[i] = new TextLabel
                 {
-                    Position2D = new Position2D(width - NuiTheme.Pad - 140, y + ((rowHeight - 6 - 38) / 2)),
-                    Size2D = new Size2D(140, 38),
-                    PointSize = 11,
+                    Position2D = new Position2D(width - NuiTheme.Pad - shortcutWidth, y),
+                    Size2D = new Size2D(shortcutWidth, rowHeight - 6),
+                    PointSize = NuiTheme.Pt(11),
                     HorizontalAlignment = HorizontalAlignment.End,
+                    VerticalAlignment = VerticalAlignment.Center,
                     TextColor = NuiTheme.InkMuted,
                     Text = item.Shortcut,
                 };
-                _menuPanel.Add(_menuShortcuts[i]);
+                set.Panel.Add(set.Shortcuts[i]);
             }
 
-            _menuPanel.Add(new TextLabel
+            set.Panel.Add(new TextLabel
             {
-                Position2D = new Position2D(NuiTheme.Pad, height - NuiTheme.Pad - 30),
-                Size2D = new Size2D(width - (NuiTheme.Pad * 2), 28),
-                PointSize = 10,
+                Position2D = new Position2D(NuiTheme.Pad, height - NuiTheme.Pad - NuiTheme.Px(30)),
+                Size2D = new Size2D(width - (NuiTheme.Pad * 2), NuiTheme.Px(28)),
+                PointSize = NuiTheme.Pt(10),
                 TextColor = NuiTheme.InkMuted,
-                Text = "up/down to choose  ·  OK to pick  ·  Return to close",
+                Text = "cima/baixo escolhem  ·  OK confirma  ·  Voltar fecha",
             });
 
-            _window.Add(_menuPanel);
-            _menuPanel.Hide();
+            _window.Add(set.Panel);
+            set.Panel.Hide();
+            return set;
+        }
+
+        /// <summary>
+        /// Points the menu fields at one of the two menus. The one being left is
+        /// closed and hidden first, so the two can never be up at once.
+        /// </summary>
+        private void UseMenu(MenuSet set)
+        {
+            if (_menu != null && _menu != set.Menu)
+            {
+                _menu.Close();
+                _menuPanel.Hide();
+            }
+
+            _menu = set.Menu;
+            _menuPanel = set.Panel;
+            _menuLabels = set.Labels;
+            _menuShortcuts = set.Shortcuts;
+            _menuHighlight = set.Highlight;
+            _menuRowHeight = set.RowHeight;
         }
 
         private void ShowMenu(bool visible)
         {
             if (visible)
             {
+                if (_favBar != null && _favBar.IsVisible)
+                {
+                    _favBar.Close();
+                }
+
                 _menu.Open();
                 DrawMenuSelection();
                 _menuPanel.Show();
@@ -1553,6 +1730,10 @@ namespace Overscan
             {
                 _menu.Close();
                 _menuPanel.Hide();
+
+                // Every opening starts at the short menu, for the reason
+                // RemoteMenu.Open gives for starting at the first row.
+                UseMenu(_mainMenu);
             }
         }
 
@@ -1561,7 +1742,7 @@ namespace Overscan
             int rowHeight = _menuRowHeight;
             _menuHighlight.Position2D = new Position2D(
                 _menuHighlight.Position2D.X,
-                NuiTheme.Pad + 56 + (_menu.SelectedIndex * rowHeight));
+                NuiTheme.Pad + NuiTheme.Px(56) + (_menu.SelectedIndex * rowHeight));
 
             for (int i = 0; i < _menuLabels.Length; i++)
             {
@@ -1591,6 +1772,36 @@ namespace Overscan
 
             switch (id)
             {
+                case RemoteMenu.ActionFavouritesBar:
+                    OpenFavouritesBar();
+                    break;
+
+                case RemoteMenu.ActionZoomIn:
+                    ChangeZoom(1);
+                    break;
+
+                case RemoteMenu.ActionZoomOut:
+                    ChangeZoom(-1);
+                    break;
+
+                case RemoteMenu.ActionZoomReset:
+                    ChangeZoom(0);
+                    break;
+
+                case RemoteMenu.ActionVideoFullscreen:
+                    ToggleVideoFullscreen();
+                    break;
+
+                case RemoteMenu.ActionAdvanced:
+                    UseMenu(_advancedMenu);
+                    ShowMenu(true);
+                    break;
+
+                case RemoteMenu.ActionMainMenu:
+                    UseMenu(_mainMenu);
+                    ShowMenu(true);
+                    break;
+
                 case RemoteMenu.ActionAddress:
                     _keyboard.Open(KeyboardTarget.Address, _atHome ? string.Empty : _cachedUrl);
                     break;
@@ -1648,7 +1859,7 @@ namespace Overscan
                         _cursor.Show();
                     }
 
-                    Flash(_keysToPage ? "keys go to the page" : "keys move the pointer");
+                    Flash(_keysToPage ? "As teclas vão para a página" : "As teclas movem o ponteiro");
                     UpdateStatus();
                     break;
 
@@ -1658,8 +1869,8 @@ namespace Overscan
                         : CursorVisual.Native);
                     Store.Set("cursorVisual", _cursor.Visual == CursorVisual.Native ? 1 : 0);
                     Flash(_cursor.Visual == CursorVisual.Native
-                        ? "Pointer drawn by Overscan — keeps up on heavy pages"
-                        : "Pointer drawn by the page — an arrow, but only as quick as the page");
+                        ? "Ponteiro do navegador (mais rápido em páginas pesadas)"
+                        : "Ponteiro da página (uma seta, tão rápida quanto a página)");
                     break;
 
                 case RemoteMenu.ActionFitPage:
@@ -1696,8 +1907,8 @@ namespace Overscan
                     _videoPathChosen = true;
                     Store.Set("videoOverlay", _videoOverlay);
                     Flash(_videoOverlay
-                        ? "Video: hardware overlay — the TV's own path"
-                        : "Video: in page — try this if video closes the app");
+                        ? "Vídeo pelo caminho da própria TV"
+                        : "Vídeo dentro da página (tente se o vídeo fechar o app)");
 
                     // The engine reads this when a video element is created, so the
                     // page that is already open keeps whatever it started with.
@@ -1748,7 +1959,15 @@ namespace Overscan
 
                 case RemoteKeys.Back:
                 case RemoteKeys.Left:
+                    // From "Avançado", back means the short menu, not out of the
+                    // menu altogether: that is where the person came from.
+                    bool advanced = _menu == _advancedMenu.Menu;
                     ShowMenu(false);
+                    if (advanced)
+                    {
+                        ShowMenu(true);
+                    }
+
                     return true;
             }
 
@@ -1769,6 +1988,20 @@ namespace Overscan
             }
 
             string key = e.Key.KeyPressedName;
+
+            // Overscan BR: a key while the pointer is asleep in fullscreen wakes
+            // it. Arrows and OK stop there; anything else (Back, blue, the menu)
+            // still does its own job on the same press.
+            _lastPointerKey = DateTime.UtcNow;
+            if (_pointerIdleHidden)
+            {
+                WakePointer();
+                if (key == RemoteKeys.Left || key == RemoteKeys.Right || key == RemoteKeys.Up ||
+                    key == RemoteKeys.Down || key == RemoteKeys.Ok || key == RemoteKeys.OkKeypad)
+                {
+                    return;
+                }
+            }
 
             // Only the buttons that earn the bar its four seconds: going back, the
             // menu, a numbered shortcut. The bar used to come up on every key down,
@@ -1816,6 +2049,11 @@ namespace Overscan
                 return;
             }
 
+            if (_favBar.IsVisible && _favBar.HandleKey(key))
+            {
+                return;
+            }
+
             if (RemoteKeys.IsMenuKey(key) || (RemoteKeys.IsMediaKey(key) && !_keysToPage))
             {
                 ShowMenu(true);
@@ -1853,6 +2091,10 @@ namespace Overscan
                     if (_overlayVisible)
                     {
                         ShowOverlay(false);
+                    }
+                    else if (_videoFull)
+                    {
+                        ToggleVideoFullscreen();
                     }
                     else if (_web.CanGoBack())
                     {
@@ -1910,13 +2152,38 @@ namespace Overscan
                     break;
 
                 case RemoteKeys.Info:
-                    RunAction(RemoteMenu.ActionImages);
+                    // Overscan BR: Info only brings the bar up (IsChromeKey already
+                    // did). Upstream made it the images switch, kept per site, and
+                    // on this remote it was pressed by accident: a site came back
+                    // with images off and its video player stopped working, with
+                    // nothing on screen to say why. Images stay in "Avançado".
                     break;
 
                 default:
                     if (RemoteKeys.IsSwitchKey(key))
                     {
-                        RunAction(RemoteMenu.ActionSwitchSite);
+                        // Overscan BR: red is the favourites bar. Switching site
+                        // is still in "Avançado".
+                        if (_favBar.IsVisible)
+                        {
+                            _favBar.Close();
+                        }
+                        else
+                        {
+                            RunAction(RemoteMenu.ActionFavouritesBar);
+                        }
+                    }
+                    else if (RemoteKeys.IsZoomInKey(key))
+                    {
+                        RunAction(RemoteMenu.ActionZoomIn);
+                    }
+                    else if (RemoteKeys.IsZoomOutKey(key))
+                    {
+                        RunAction(RemoteMenu.ActionZoomOut);
+                    }
+                    else if (RemoteKeys.IsFullscreenKey(key))
+                    {
+                        RunAction(RemoteMenu.ActionVideoFullscreen);
                     }
                     else
                     {
@@ -1986,7 +2253,7 @@ namespace Overscan
 
             if (_hintsFooter != null)
             {
-                _hintsFooter.Text = "unknown button: " + key;
+                _hintsFooter.Text = "botão desconhecido: " + key;
             }
         }
 
@@ -2059,7 +2326,7 @@ namespace Overscan
 
                     if (!NuiNativeTouch.Click(_window, windowX, windowY))
                     {
-                        Flash("This frame cannot be clicked");
+                        Flash("Não dá para clicar dentro deste quadro");
                         return;
                     }
                 }
@@ -2075,7 +2342,7 @@ namespace Overscan
 
                     if (inspector && !NuiInspectorInput.Succeeded)
                     {
-                        Flash("This frame cannot be clicked");
+                        Flash("Não dá para clicar dentro deste quadro");
                     }
                 });
             }
@@ -2119,14 +2386,14 @@ namespace Overscan
                 _startupUrl = null;
                 StartPage.SetAddress(null);
                 DiagLog.Add("start page cleared");
-                Flash("Start page cleared");
+                Flash("Página inicial apagada");
                 return;
             }
 
             _startupUrl = Urls.Normalize(text);
             StartPage.SetAddress(_startupUrl);
             DiagLog.Add("start page = " + _startupUrl);
-            Flash("Opens here from now on");
+            Flash("A partir de agora abre aqui");
             Navigate(_startupUrl);
         }
 
@@ -2237,7 +2504,7 @@ namespace Overscan
             NuiAdBlock.Enabled = _adBlockOn;
             Store.Set("adblock", _adBlockOn);
             DiagLog.Add("ad block " + (_adBlockOn ? "ON" : "OFF"));
-            Flash(_adBlockOn ? "Ad blocking on" : "Ad blocking off — ads and trackers load");
+            Flash(_adBlockOn ? "Bloqueio de anúncios ligado" : "Bloqueio de anúncios desligado");
             UpdateStatus();
             try
             {
@@ -2262,8 +2529,8 @@ namespace Overscan
             Store.Set("onevideo", _oneVideoOn);
             DiagLog.Add("one video at a time " + (_oneVideoOn ? "ON" : "OFF"));
             Flash(_oneVideoOn
-                ? "One video at a time — the next reel loads when it is played"
-                : "Videos preload freely — a reel may freeze when the next one is readied");
+                ? "Um vídeo por vez: o próximo só carrega quando tocar"
+                : "Vídeos carregam livres: um pode travar quando o próximo é preparado");
             UpdateStatus();
             try
             {
@@ -2301,11 +2568,11 @@ namespace Overscan
                 // again — otherwise a site with a rule, left through the start
                 // screen and come back to, keeps the setting made while away.
                 _siteKey = null;
-                Flash(on ? "Images on" : "Images off — faster");
+                Flash(on ? "Imagens ligadas" : "Imagens desligadas (mais rápido)");
             }
             else
             {
-                Flash((on ? "Images on for " : "Images off for ") + rule.Site);
+                Flash((on ? "Imagens ligadas em " : "Imagens desligadas em ") + rule.Site);
             }
 
             ApplyImages(on);
@@ -2335,7 +2602,7 @@ namespace Overscan
             }
             else
             {
-                Flash(ShortPreset(_presets[next].Label) + " for " + rule.Site);
+                Flash(ShortPreset(_presets[next].Label) + " em " + rule.Site);
             }
 
             Reload("identity");
@@ -2353,7 +2620,7 @@ namespace Overscan
             Bookmark other = SiteRules.OtherSite(Store.AllFavourites, Store.RecentHistory, PageUrl());
             if (other == null)
             {
-                Flash("No other site to switch to yet");
+                Flash("Ainda não tem outro site para trocar");
                 return;
             }
 
@@ -2373,12 +2640,12 @@ namespace Overscan
             SiteRule rule = SiteRules.Forget(url);
             if (rule == null)
             {
-                Flash(url == null ? "Open a site first" : "Nothing is remembered for this site");
+                Flash(url == null ? "Abra um site primeiro" : "Não há ajustes guardados para este site");
                 return;
             }
 
             DiagLog.Add("site rules: forgot " + rule.Site);
-            Flash("Forgot the settings for " + rule.Site);
+            Flash("Ajustes esquecidos para " + rule.Site);
 
             // A change of settings like any other, so it is applied and reloaded
             // like any other. The forgotten site is no longer the applied one.
@@ -2534,7 +2801,7 @@ namespace Overscan
                 _proxyPending = true;
                 _proxyPendingUrl = url;
                 _keyboard.Open(KeyboardTarget.Proxy, string.Empty);
-                Flash("Type the proxy first, like http://1.2.3.4:8080");
+                Flash("Digite o proxy primeiro, tipo http://1.2.3.4:8080");
                 return;
             }
 
@@ -2548,11 +2815,11 @@ namespace Overscan
             {
                 _defaultProxyOn = on;
                 Store.Set("proxyAll", on);
-                Flash(on ? "Proxy on for every site" : "Proxy off, except sites you turned it on for");
+                Flash(on ? "Proxy ligado em todos os sites" : "Proxy desligado, menos nos sites em que você ligou");
             }
             else
             {
-                Flash((on ? "Proxy on for " : "Proxy off for ") + rule.Site);
+                Flash((on ? "Proxy ligado em " : "Proxy desligado em ") + rule.Site);
             }
 
             DiagLog.Add("proxy " + (on ? "ON" : "OFF") + " for " + (rule == null ? "every site" : rule.Site));
@@ -2581,7 +2848,7 @@ namespace Overscan
                 _proxy = null;
                 Store.Set("proxy", string.Empty);
                 DiagLog.Add("proxy cleared");
-                Flash("Proxy cleared, every site goes direct");
+                Flash("Proxy apagado, todos os sites vão direto");
                 if (wasOn)
                 {
                     ApplyProxy(false);
@@ -2755,13 +3022,13 @@ namespace Overscan
             string url = PageUrl();
             if (string.IsNullOrEmpty(url) || url == "-")
             {
-                Flash("Open a page first, or use \u201cKeep an address\u2026\u201d in the menu");
+                Flash("Abra uma página primeiro, ou use \u201cGuardar um endereço digitado\u201d em Avançado");
                 return;
             }
 
             bool kept = Store.ToggleFavourite(url, PageTitle());
             DiagLog.Add((kept ? "kept " : "removed ") + url);
-            Flash(kept ? "Kept this page" : "Removed from favourites");
+            Flash(kept ? "Página guardada nos favoritos" : "Página tirada dos favoritos");
 
             // The star on the bar is read from the same cache, so it would
             // otherwise keep showing the answer from before the press.
@@ -2813,7 +3080,7 @@ namespace Overscan
 
             if (string.IsNullOrEmpty(url) || url == "null" || Store.IsGenerated(url))
             {
-                Flash("Point at a tile, then press 8 to remove it");
+                Flash("Aponte para um quadro e aperte 8 para tirá-lo");
                 return;
             }
 
@@ -2824,13 +3091,13 @@ namespace Overscan
                 // is not what we were told it is. Say so rather than reporting a
                 // removal that did not happen.
                 DiagLog.Add("tile not found in " + (kind == "recent" ? "history" : "favourites") + ": " + url);
-                Flash("That tile is not in the list any more");
+                Flash("Esse quadro já não está mais na lista");
                 ShowHome();
                 return;
             }
 
             DiagLog.Add("removed " + kind + " tile " + url);
-            Flash("Removed " + Urls.Readable(url));
+            Flash("Tirado: " + Urls.Readable(url));
 
             // Rebuilt, or the tile just removed is still on the screen — which is
             // exactly the "it did not work" this whole thread is about.
@@ -2872,12 +3139,12 @@ namespace Overscan
             if (Store.Keep(url, title))
             {
                 DiagLog.Add("kept address " + url);
-                Flash("Kept " + title);
+                Flash("Guardado: " + title);
             }
             else
             {
                 DiagLog.Add("already kept: " + url);
-                Flash(title + " is already kept — press 8 on its tile to remove it");
+                Flash(title + " já está nos favoritos (8 no quadro tira)");
             }
         }
 
@@ -2891,10 +3158,389 @@ namespace Overscan
             bool on = StartPage.ToggleLast();
             DiagLog.Add("start page mode: " + StartPage.Mode());
             Flash(on
-                ? "Opens where you left off"
-                : "Opens at " + (string.IsNullOrEmpty(StartPage.Address)
-                    ? "the start screen"
+                ? "Abre onde você parou"
+                : "Abre em " + (string.IsNullOrEmpty(StartPage.Address)
+                    ? "a tela inicial"
                     : StartPage.Address));
+        }
+
+        // ----------------------------------------------------------- Overscan BR
+
+        /// <summary>
+        /// What the favourites start as, on this build's very first launch and
+        /// never again: a removed starter must stay removed. Edit this list to
+        /// change what a fresh install shows.
+        /// </summary>
+        private static readonly string[][] StarterFavourites =
+        {
+            new[] { "https://ge.globo.com/", "ge" },
+            new[] { "https://www.google.com.br/", "Google" },
+        };
+
+        private static void SeedFavourites()
+        {
+            if (Store.GetBool("brSeeded", false))
+            {
+                return;
+            }
+
+            // Keep puts each one at the front, so the list goes in backwards to
+            // come out in the order it is written above.
+            for (int i = StarterFavourites.Length - 1; i >= 0; i--)
+            {
+                Store.Keep(StarterFavourites[i][0], StarterFavourites[i][1]);
+            }
+
+            Store.Set("brSeeded", true);
+            DiagLog.Add("starter favourites kept: " + StarterFavourites.Length);
+        }
+
+        private void OpenFavouritesBar()
+        {
+            if (_keyboard.IsVisible)
+            {
+                _keyboard.Close();
+            }
+
+            _favBar.Open(Store.AllFavourites, PageUrl() != null);
+            ShowChrome();
+        }
+
+        private void OnFavouriteChosen(Bookmark favourite)
+        {
+            Flash("Abrindo " + Urls.Readable(favourite.Url));
+            Navigate(favourite.Url);
+        }
+
+        /// <summary>
+        /// The bar's last tile. On a page it keeps that page; on the start screen
+        /// there is no page, so it opens the keyboard for an address instead.
+        /// It only ever adds: a "keep" that sometimes removes is upstream issue
+        /// #80's lesson, and removing stays on 8.
+        /// </summary>
+        private void OnFavouritesBarKeep()
+        {
+            string url = PageUrl();
+            if (url == null)
+            {
+                RunAction(RemoteMenu.ActionKeepAddress);
+            }
+            else if (Store.IsFavourite(url))
+            {
+                Flash("Esta página já está nos favoritos");
+            }
+            else
+            {
+                ToggleFavourite();
+            }
+        }
+
+        /// <summary>
+        /// Where a zoom choice is remembered: per site, and on the start screen
+        /// the default for every site without one of its own. The same split the
+        /// images and identity switches use, so it behaves the way they do.
+        /// </summary>
+        private string ZoomKey()
+        {
+            string site = SiteRules.KeyFor(PageUrl());
+            return site == null ? "zoomDefault" : "zoom:" + site;
+        }
+
+        /// <summary>
+        /// Works out the zoom the page now showing should have. Safe from inside
+        /// the engine's callbacks: it reads our own store and nothing else.
+        /// </summary>
+        private void ApplyZoom()
+        {
+            int fallback = Store.GetInt("zoomDefault", 100);
+            string site = SiteRules.KeyFor(PageUrl());
+            SetZoom(site == null ? fallback : Store.GetInt("zoom:" + site, fallback));
+        }
+
+        /// <summary>
+        /// The engine's own page zoom, which scales text, images and layout
+        /// together the way a desktop browser's Ctrl-plus does. Text-only zoom
+        /// would keep the layout and is the gentler option on paper, but it is
+        /// hidden API at this level and breaks pages that size boxes for their
+        /// text. Best-effort like everything past the managed surface.
+        /// </summary>
+        private void SetZoom(int percent)
+        {
+            _zoomPercent = percent;
+            _zoomPending = true;
+        }
+
+        /// <summary>
+        /// Hands the pending zoom to the engine, from the tick and only between
+        /// loads. Asks what the engine has first, so a page that kept the factor
+        /// across a navigation is not told again, and names the native call on
+        /// the trail before making it: if this is ever what stops the app, the
+        /// last line of the previous run says so.
+        /// </summary>
+        private void PushZoom()
+        {
+            _zoomPending = false;
+            if (_web == null)
+            {
+                return;
+            }
+
+            float wanted = _zoomPercent / 100f;
+            try
+            {
+                float now = _web.PageZoomFactor;
+                if (Math.Abs(now - wanted) < 0.005f)
+                {
+                    return;
+                }
+
+                Breadcrumbs.Drop("zoom: setting " + _zoomPercent + "% (engine had " +
+                                 Math.Round(now * 100) + "%)");
+                _web.PageZoomFactor = wanted;
+                Breadcrumbs.Drop("zoom: set");
+            }
+            catch (Exception ex)
+            {
+                Breadcrumbs.Drop("page zoom failed: " + ex.GetType().Name + ": " + ex.Message);
+            }
+        }
+
+        /// <summary>One step bigger (+1), smaller (-1), or back to 100% (0).</summary>
+        private void ChangeZoom(int direction)
+        {
+            int next = 100;
+            if (direction != 0)
+            {
+                int i = Array.IndexOf(ZoomSteps, _zoomPercent);
+                if (i < 0)
+                {
+                    i = Array.IndexOf(ZoomSteps, 100);
+                }
+
+                next = ZoomSteps[Math.Max(0, Math.Min(ZoomSteps.Length - 1, i + direction))];
+            }
+
+            SetZoom(next);
+            Store.Set(ZoomKey(), next);
+
+            string site = SiteRules.KeyFor(PageUrl());
+            bool limit = direction != 0 && next == ZoomSteps[direction > 0 ? ZoomSteps.Length - 1 : 0];
+            Flash("Letra " + next + "%" + (limit ? " (no limite)" : string.Empty) +
+                  (site == null ? " em todos os sites" : " em " + site));
+        }
+
+        /// <summary>
+        /// Called by <see cref="DiagServer"/> on its own thread when the Mac asks
+        /// for a page. Nothing here may touch DALi or the web view: it only leaves
+        /// the address for <see cref="TakeRemoteOpen"/> on the main thread.
+        /// </summary>
+        private string OnRemoteOpen(string url)
+        {
+            _remoteOpen = url;
+            return "ok, abrindo " + url;
+        }
+
+        private void TakeRemoteOpen()
+        {
+            string url = _remoteOpen;
+            if (url == null || _web == null)
+            {
+                return;
+            }
+
+            _remoteOpen = null;
+
+            // Whatever was open on screen was for the page being left.
+            if (_keyboard.IsVisible)
+            {
+                _keyboard.Close();
+            }
+
+            if (_menu.Visible)
+            {
+                ShowMenu(false);
+            }
+
+            if (_favBar.IsVisible)
+            {
+                _favBar.Close();
+            }
+
+            string target = Urls.Normalize(url);
+            Breadcrumbs.Drop("opened from the network: " + target);
+            Navigate(target);
+            Flash("Aberto pelo Mac: " + Urls.Readable(target));
+        }
+
+        /// <summary>
+        /// The page's video to the whole screen, or back, the way F does on a
+        /// desktop player.
+        ///
+        /// A stylesheet that pins the element over the whole viewport and hides
+        /// everything else on the page (fixed headers and side bars included,
+        /// whatever their z-index), and nothing more. Every ancestor of the
+        /// element loses its transform, filter and containment while it lasts,
+        /// because any of those makes "fixed" mean "fixed inside that box" and
+        /// the video stays the size of its column. Pressing again removes the
+        /// sheet and every mark, so the page is exactly as it was. The first version also asked for the real Fullscreen
+        /// API, which on this TV hands the video to the engine's own fullscreen
+        /// path: the part of the media stack that aborted the process on
+        /// 2026-10-17. The NUI view keeps the engine's fullscreen signals
+        /// internal at API 9 (see <see cref="WatchTheEngine"/>), so that path
+        /// was never one this app could follow or undo anyway. The view already fills the screen, so a video filling the
+        /// view is a fullscreen video. A player inside another site's frame is
+        /// out of reach of any script, so the frame itself is what gets
+        /// stretched when the page has no video of its own.
+        ///
+        /// The element is never moved in the DOM: taking a media element out of
+        /// the document pauses it, which is the one thing this must not do.
+        /// </summary>
+        private void ToggleVideoFullscreen()
+        {
+            if (_web == null || _atHome)
+            {
+                Flash("Abra uma página com vídeo primeiro");
+                return;
+            }
+
+            const string script =
+                "(function(){var d=document,id='__ovsbr_full',st=d.getElementById(id);" +
+                "if(st){var on=d.querySelectorAll('[data-ovsbr-full],[data-ovsbr-anc]');" +
+                "for(var k=0;k<on.length;k++){on[k].removeAttribute('data-ovsbr-full');on[k].removeAttribute('data-ovsbr-anc');}" +
+                "var c=d.querySelector('[data-ovsbr-ctl]');if(c){c.controls=true;c.removeAttribute('data-ovsbr-ctl');}" +
+                "st.parentNode.removeChild(st);" +
+                "try{if(d.fullscreenElement&&d.exitFullscreen){d.exitFullscreen();}else if(d.webkitFullscreenElement&&d.webkitExitFullscreen){d.webkitExitFullscreen();}}catch(e){}" +
+                "return 'off';}" +
+                "function area(e){var r=e.getBoundingClientRect();return r.width*r.height;}" +
+                "var best=null,score=0,v=d.querySelectorAll('video');" +
+                "for(var i=0;i<v.length;i++){var a=area(v[i]);if(a<=0){continue;}var s=a+(v[i].paused?0:1e9);if(s>score){best=v[i];score=s;}}" +
+                "if(!best){var f=d.querySelectorAll('iframe');for(var j=0;j<f.length;j++){var b=area(f[j]);if(b>score){best=f[j];score=b;}}}" +
+                "if(!best){return 'none';}" +
+                "best.setAttribute('data-ovsbr-full','1');" +
+                "for(var p=best.parentElement;p&&p!==d.documentElement;p=p.parentElement){p.setAttribute('data-ovsbr-anc','1');}" +
+                "st=d.createElement('style');st.id=id;" +
+                "st.textContent='html,body{background:#000!important;overflow:hidden!important}'+" +
+                "'body *{visibility:hidden!important}'+" +
+                "'[data-ovsbr-full],[data-ovsbr-full] *{visibility:visible!important}'+" +
+                "'[data-ovsbr-anc]{transform:none!important;filter:none!important;perspective:none!important;contain:none!important;will-change:auto!important;backdrop-filter:none!important;clip-path:none!important}'+" +
+                "'[data-ovsbr-full]{position:fixed!important;top:0!important;left:0!important;right:auto!important;bottom:auto!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;transform:none!important;z-index:2147483647!important;background:#000!important;object-fit:contain!important}';" +
+                "(d.head||d.documentElement).appendChild(st);return best.tagName.toLowerCase();})()";
+
+            try
+            {
+                // On the trail before the call, the way every native step here is:
+                // the first Overscan BR crash on this set (2026-10-17) was the TV's
+                // own audio decoder aborting the process on a video page, and the
+                // trail could not say whether this key had been pressed.
+                Breadcrumbs.Drop("video fullscreen: asking the page");
+                _web.EvaluateJavaScript(script, result =>
+                {
+                    // Fires once empty before the real result arrives, as Probe notes.
+                    if (string.IsNullOrEmpty(result))
+                    {
+                        return;
+                    }
+
+                    string answer = result.Trim('"');
+                    Breadcrumbs.Drop("video fullscreen: " + answer);
+                    switch (answer)
+                    {
+                        case "off":
+                            _videoFull = false;
+                            WakePointer();
+                            Flash("Saiu da tela cheia");
+                            break;
+                        case "none":
+                            _videoFull = false;
+                            WakePointer();
+                            Flash("Não achei vídeo nesta página");
+                            break;
+                        default:
+                            _videoFull = true;
+                            _lastPointerKey = DateTime.UtcNow;
+                            HideChrome();
+                            if (_hintsWanted)
+                            {
+                                ShowHints(false);
+                            }
+
+                            break;
+                    }
+
+                    if (!_videoFull && _hintsWanted)
+                    {
+                        ShowHints(true);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("video fullscreen failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Puts the pointer away for fullscreen video: our drawing of it, the
+        /// page's own video controls, and the engine's mouse, which goes to the
+        /// upper middle of the picture so a player in another site's frame stops
+        /// seeing it rest on its control bar.
+        /// </summary>
+        private void SleepPointer()
+        {
+            _pointerIdleHidden = true;
+            _cursor.Hide();
+            SetPageVideoControls(false);
+
+            Size2D screen = _window.WindowSize;
+            double scale = Math.Max(0.1, _zoomPercent / 100.0);
+            int x = (int)Math.Round(screen.Width / 2.0 / scale);
+            int y = (int)Math.Round(screen.Height / 4.0 / scale);
+            bool moved = NuiInspectorInput.Move(x, y);
+            DiagLog.Add("pointer asleep" + (moved ? ", engine mouse moved off the controls" : string.Empty));
+        }
+
+        /// <summary>Undoes <see cref="SleepPointer"/>. Harmless when it is not asleep.</summary>
+        private void WakePointer()
+        {
+            if (!_pointerIdleHidden)
+            {
+                return;
+            }
+
+            _pointerIdleHidden = false;
+            if (!_keysToPage)
+            {
+                _cursor.Show();
+            }
+
+            SetPageVideoControls(true);
+        }
+
+        /// <summary>
+        /// Hides or restores the controls of the fullscreen video when it is a
+        /// video of this page. A player inside another site's frame is out of
+        /// reach; its controls are its own business, see SleepPointer.
+        /// </summary>
+        private void SetPageVideoControls(bool show)
+        {
+            if (_web == null)
+            {
+                return;
+            }
+
+            string script = show
+                ? "(function(){var v=document.querySelector('[data-ovsbr-ctl]');" +
+                  "if(v){v.controls=true;v.removeAttribute('data-ovsbr-ctl');}})()"
+                : "(function(){var v=document.querySelector('video[data-ovsbr-full]');" +
+                  "if(v&&v.controls){v.setAttribute('data-ovsbr-ctl','1');v.controls=false;}})()";
+            try
+            {
+                _web.EvaluateJavaScript(script);
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("video controls " + (show ? "back" : "away") + " failed: " + ex.Message);
+            }
         }
 
         private void Flash(string message)
@@ -3000,7 +3646,7 @@ namespace Overscan
             if (_web == null)
             {
                 _status.TextColor = NuiTheme.Negative;
-                _status.Text = "web engine unavailable";
+                _status.Text = "navegador indisponível";
                 return;
             }
 
@@ -3011,8 +3657,8 @@ namespace Overscan
                               _window.WindowSize.Height + ")";
 
             string url = _atHome ? string.Empty : _cachedUrl;
-            _host.Text = _atHome ? "Overscan" : HostOf(url);
-            _path.Text = _atHome ? "start screen" : PathOf(url);
+            _host.Text = _atHome ? "Overscan BR" : HostOf(url);
+            _path.Text = _atHome ? "tela inicial" : PathOf(url);
 
             if (_flashUntil != DateTime.MinValue)
             {
@@ -3020,14 +3666,15 @@ namespace Overscan
             }
 
             _status.TextColor = NuiTheme.InkMuted;
-            _status.Text = (!_atHome && Store.IsFavourite(_cachedUrl) ? "★   ·   " : string.Empty) +
-                           ShortPreset(_presets[_presetIndex].Label) +
-                           "   ·   " + (_keysToPage ? "page keys" : "cursor") +
-                           (_viewportFix ? "   ·   fit" : string.Empty) +
-                           (_imagesOn ? string.Empty : "   ·   no images") +
-                           (_adBlockOn ? string.Empty : "   ·   ads allowed") +
-                           (_proxyOn ? "   ·   via proxy" : string.Empty) +
-                           (SiteRules.For(_cachedUrl) == null ? string.Empty : "   ·   for this site");
+            // Overscan BR drops the identity name from the bar: "Desktop Chrome"
+            // means nothing from a sofa, and it is still on the diagnostics page.
+            _status.Text = (!_atHome && Store.IsFavourite(_cachedUrl) ? "★ favorito   ·   " : string.Empty) +
+                           "letra " + _zoomPercent + "%" +
+                           (_keysToPage ? "   ·   teclas na página" : string.Empty) +
+                           (_viewportFix ? "   ·   ajustada" : string.Empty) +
+                           (_imagesOn ? string.Empty : "   ·   sem imagens") +
+                           (_adBlockOn ? string.Empty : "   ·   com anúncios") +
+                           (_proxyOn ? "   ·   via proxy" : string.Empty);
         }
 
         private string Report()

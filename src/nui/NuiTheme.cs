@@ -21,8 +21,29 @@ namespace Overscan
         public static readonly Color KeyFill = new Color(0.125f, 0.137f, 0.169f, 1f);
         public static readonly Color KeyFillAlt = new Color(0.173f, 0.188f, 0.227f, 1f);
 
-        public const int BarHeight = 72;
+        public const int BarHeight = 96;
         public const int Pad = 24;
         public const float Radius = 12f;
+
+        /// <summary>
+        /// Overscan BR: every piece of the browser's own text, about a third
+        /// larger than upstream. The original sizes were chosen at a desk; this
+        /// build is read from a sofa three metres away, and the person it is for
+        /// asked for exactly this. Box heights grow with the text through
+        /// <see cref="Px"/>, because a TextLabel clips whatever does not fit.
+        /// </summary>
+        public const float TextScale = 1.35f;
+
+        /// <summary>A point size from the upstream design, scaled for this build.</summary>
+        public static float Pt(float size)
+        {
+            return (float)System.Math.Round(size * TextScale, 1);
+        }
+
+        /// <summary>A box dimension that has to grow with the text inside it.</summary>
+        public static int Px(int size)
+        {
+            return (int)System.Math.Round(size * TextScale);
+        }
     }
 }

@@ -23,6 +23,12 @@ namespace Overscan
         private const int KeyHeight = 74;
         private const int Gap = 8;
 
+        /// <summary>
+        /// The typed line above the keys. Overscan BR's larger entry text needs
+        /// more than upstream's 96: this is where somebody checks what they typed.
+        /// </summary>
+        private const int EntryArea = 112;
+
         private readonly Window _window;
         private readonly View _root;
         private readonly TextLabel _entry;
@@ -49,7 +55,7 @@ namespace Overscan
             }
 
             int width = (KeyWidth * columns) + (Gap * (columns + 1));
-            int height = (KeyHeight * _rows.Length) + (Gap * (_rows.Length + 1)) + 96;
+            int height = (KeyHeight * _rows.Length) + (Gap * (_rows.Length + 1)) + EntryArea;
             int left = (window.WindowSize.Width - width) / 2;
             int top = window.WindowSize.Height - height - 48;
 
@@ -64,8 +70,10 @@ namespace Overscan
             _entry = new TextLabel
             {
                 Position2D = new Position2D(Gap * 2, Gap * 2),
-                Size2D = new Size2D(width - (Gap * 4), 64),
-                PointSize = 16,
+                Size2D = new Size2D(width - (Gap * 4), EntryArea - (Gap * 3)),
+                PointSize = NuiTheme.Pt(16),
+                VerticalAlignment = VerticalAlignment.Center,
+                Ellipsis = true,
                 TextColor = NuiTheme.Ink,
                 Text = string.Empty,
             };
@@ -86,7 +94,7 @@ namespace Overscan
                     {
                         Position2D = new Position2D(
                             rowLeft + (c * (KeyWidth + Gap)),
-                            96 + (r * (KeyHeight + Gap))),
+                            EntryArea + (r * (KeyHeight + Gap))),
                         Size2D = new Size2D(KeyWidth, KeyHeight),
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center,
@@ -303,10 +311,10 @@ namespace Overscan
         {
             switch (target)
             {
-                case KeyboardTarget.Address: return "Go to";
-                case KeyboardTarget.Favourite: return "Keep as a tile";
+                case KeyboardTarget.Address: return "Ir para";
+                case KeyboardTarget.Favourite: return "Guardar nos favoritos";
                 case KeyboardTarget.Proxy: return "Proxy";
-                default: return "Type into page";
+                default: return "Digitar na página";
             }
         }
 
@@ -315,10 +323,19 @@ namespace Overscan
             switch (key)
             {
                 case KeyboardLayouts.CycleKey: return KeyboardLayouts.Name;
-                case KeyboardLayouts.SymbolsKey: return KeyboardLayouts.Symbols ? "abc" : "sym";
-                case KeyboardLayouts.ShiftKey: return KeyboardLayouts.Shift ? "SHIFT" : "shift";
+                case KeyboardLayouts.SymbolsKey: return KeyboardLayouts.Symbols ? "abc" : "#+=";
+                case KeyboardLayouts.ShiftKey: return KeyboardLayouts.Shift ? "MAIÚSC" : "maiúsc";
                 case KeyboardLayouts.CaretLeftKey: return "\u2190";
                 case KeyboardLayouts.CaretRightKey: return "\u2192";
+
+                // Overscan BR: only what the key says changes. The ids stay
+                // English because Press and FillFor switch on them.
+                case "space": return "espaço";
+                case "back": return "apagar";
+                case "clear": return "limpar";
+                case "close": return "fechar";
+                case "GO": return "IR";
+                case KeyboardLayouts.StartPageKey: return "inicial";
                 default: return key;
             }
         }
@@ -334,7 +351,10 @@ namespace Overscan
                     bool selected = r == _row && c == _column;
                     string label = LabelFor(_rows[r][c]);
                     _keys[r][c].Text = label;
-                    _keys[r][c].PointSize = label.Length > 1 ? 10 : 14;
+                    // Words grow less than letters: a key is 100px wide and has
+                    // to hold "inicial" or a layout name, which upstream already
+                    // sized to fit at 10.
+                    _keys[r][c].PointSize = label.Length > 1 ? 11f : NuiTheme.Pt(14);
                     _keys[r][c].BackgroundColor = selected ? NuiTheme.Accent : FillFor(_rows[r][c]);
                     _keys[r][c].TextColor = selected ? NuiTheme.Ink : NuiTheme.InkMuted;
                 }

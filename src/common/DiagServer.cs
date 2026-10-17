@@ -171,7 +171,9 @@ namespace Overscan
                 }
             }
 
-            if (key != OpenKey)
+            // Forgiving about case, spaces and the hyphen: the key is read off a
+            // TV screen and typed by hand on a computer.
+            if (NormalKey(key) != NormalKey(OpenKey))
             {
                 DiagLog.Add((open ? "abrir" : "acao") + " refused: wrong key");
                 return "recusado: chave errada";
@@ -190,6 +192,12 @@ namespace Overscan
             {
                 return "não consegui abrir: " + ex.Message;
             }
+        }
+
+        private static string NormalKey(string key)
+        {
+            return (key ?? string.Empty).Replace("-", string.Empty).Replace(" ", string.Empty)
+                                        .Trim().ToUpperInvariant();
         }
 
         private static bool FromHomeNetwork(TcpClient client)

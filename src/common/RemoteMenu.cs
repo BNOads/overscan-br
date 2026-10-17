@@ -71,6 +71,7 @@ namespace Overscan
         public const string ActionZoomReset = "zoomreset";
         public const string ActionAdvanced = "advanced";
         public const string ActionMainMenu = "mainmenu";
+        public const string ActionRemoteCard = "remotecard";
         public const string ActionVideoFullscreen = "videofull";
 
         private readonly Item[] _items;

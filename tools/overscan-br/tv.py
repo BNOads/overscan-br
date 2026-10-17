@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Controla a TV Samsung pela rede, sem instalar nada.
+"""Controla a TV Samsung (e o Overscan BR) pela rede, sem instalar nada.
 
 Uso:
   python3 tv.py site ge.globo.com          abre o site no Overscan BR (precisa estar aberto)
@@ -7,9 +7,15 @@ Uso:
   python3 tv.py app org.tizen.browser      abre um app pelo id completo
   python3 tv.py tecla KEY_HOME             aperta uma tecla do controle
 
-O "site" manda o endereco direto pro Overscan BR, pela porta 8081, com a chave
-guardada em tv_chave.txt. Se o Overscan BR estiver fechado, ele cai no plano B:
-abre o navegador da Samsung e espera voce selecionar a barra de endereco.
+Configuracao, em arquivos de uma linha ao lado deste script:
+  tv_ip.txt     IP da TV (ou a variavel de ambiente TV_IP)
+  tv_chave.txt  chave do Overscan BR (na TV: segurar OK > Avancado >
+                Controle pelo computador)
+  tv_nome.txt   opcional, o nome com que este computador aparece na TV
+
+O "site" manda o endereco direto pro Overscan BR, pela porta 8081, com a chave.
+Se o Overscan BR estiver fechado, ele cai no plano B: abre o navegador da
+Samsung e espera voce selecionar a barra de endereco.
 
 Na primeira vez que usa o controle pela rede, a TV pergunta se pode deixar o Mac
 controlar. Aceite no controle.
@@ -24,10 +30,21 @@ import ssl
 import struct
 import sys
 
-TV_IP = os.environ.get("TV_IP", "192.168.0.106")
-NOME = "Mac do JP"
-ARQ_TOKEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tv_token.txt")
-ARQ_CHAVE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tv_chave.txt")
+PASTA = os.path.dirname(os.path.abspath(__file__))
+ARQ_TOKEN = os.path.join(PASTA, "tv_token.txt")
+ARQ_CHAVE = os.path.join(PASTA, "tv_chave.txt")
+
+
+def ler_arquivo(nome, padrao=""):
+    try:
+        with open(os.path.join(PASTA, nome)) as f:
+            return f.read().strip() or padrao
+    except OSError:
+        return padrao
+
+
+TV_IP = os.environ.get("TV_IP") or ler_arquivo("tv_ip.txt")
+NOME = ler_arquivo("tv_nome.txt", "Computador")
 
 
 def ler_token():
@@ -171,6 +188,8 @@ def abrir_no_overscan(endereco):
 
 
 def main():
+    if not TV_IP:
+        sys.exit("Falta o IP da TV: crie tv_ip.txt ao lado do tv.py (ou use TV_IP=...).")
     if len(sys.argv) != 3 or sys.argv[1] not in ("site", "digitar", "app", "tecla"):
         sys.exit(__doc__)
     acao, valor = sys.argv[1], sys.argv[2]

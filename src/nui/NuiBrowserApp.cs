@@ -141,11 +141,89 @@ namespace Overscan
         private const int PointerIdleSeconds = 3;
 
         /// <summary>
-        /// What a request to <c>:8081/abrir</c> has to carry. Without it anybody on
-        /// the home network could put any page on this TV; with it only the Mac
-        /// holding the same word in <c>tv.py</c> can.
+        /// What a request to <c>:8081/abrir</c> or <c>/acao</c> has to carry.
+        /// Without it anybody on the home network could put any page on this TV.
+        /// Made once per install on first launch and kept in the store, so every
+        /// TV has its own and the public code carries none. It is shown on the TV
+        /// itself (Avançado, "Controle pelo computador"): the one place somebody
+        /// holding the remote can read it and nobody on the network can.
         /// </summary>
-        private const string RemoteOpenKey = "96314a0ecfbd6bb216dcab92";
+        private static string RemoteKey()
+        {
+            string key = Store.Get("remoteKey", string.Empty);
+            if (key.Length == 0)
+            {
+                key = NewRemoteKey();
+                Store.Set("remoteKey", key);
+                DiagLog.Add("remote key made for this install");
+            }
+
+            return key;
+        }
+
+        /// <summary>
+        /// Eight characters in two groups, from an alphabet without the pairs that
+        /// read alike on a TV (0/O, 1/I): about 40 bits, typed once on a computer.
+        /// Thirty-two letters divide 256 evenly, so every one is equally likely.
+        /// </summary>
+        private static string NewRemoteKey()
+        {
+            const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+            var bytes = new byte[8];
+            using (var random = System.Security.Cryptography.RandomNumberGenerator.Create())
+            {
+                random.GetBytes(bytes);
+            }
+
+            var key = new System.Text.StringBuilder();
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                if (i == 4)
+                {
+                    key.Append('-');
+                }
+
+                key.Append(alphabet[bytes[i] % alphabet.Length]);
+            }
+
+            return key.ToString();
+        }
+
+        /// <summary>
+        /// This TV's address on the home network, for the card that tells the
+        /// computer where to send things. Best-effort: a platform that will not
+        /// say gets pointed at the TV's own network settings instead.
+        /// </summary>
+        private static string LocalAddress()
+        {
+            try
+            {
+                foreach (System.Net.NetworkInformation.NetworkInterface nic in
+                         System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up)
+                    {
+                        continue;
+                    }
+
+                    foreach (System.Net.NetworkInformation.UnicastIPAddressInformation address in
+                             nic.GetIPProperties().UnicastAddresses)
+                    {
+                        if (address.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                            !System.Net.IPAddress.IsLoopback(address.Address))
+                        {
+                            return address.Address.ToString();
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("local address unreadable: " + ex.Message);
+            }
+
+            return "veja em Configurações > Geral > Rede";
+        }
 
         private UserAgentPreset[] _presets = UserAgents.Defaults();
         private int _presetIndex;
@@ -387,7 +465,7 @@ namespace Overscan
             _keyboard.StartPageSet += OnStartPageSet;
             _window.KeyEvent += OnWindowKey;
 
-            DiagServer.OpenKey = RemoteOpenKey;
+            DiagServer.OpenKey = RemoteKey();
             DiagServer.OpenHandler = OnRemoteOpen;
             DiagServer.ActionHandler = OnRemoteAction;
 
@@ -1609,6 +1687,7 @@ namespace Overscan
                 new RemoteMenu.Item(RemoteMenu.ActionProxyAddress, "Endereço do proxy…", string.Empty),
                 new RemoteMenu.Item(RemoteMenu.ActionForgetSite, "Esquecer os ajustes deste site", string.Empty),
                 new RemoteMenu.Item(RemoteMenu.ActionHints, "Cartão do controle: mostra/esconde", "7"),
+                new RemoteMenu.Item(RemoteMenu.ActionRemoteCard, "Controle pelo computador…", string.Empty),
                 new RemoteMenu.Item(RemoteMenu.ActionDiagnostics, "Diagnóstico", "3"),
             });
 
@@ -1945,6 +2024,10 @@ namespace Overscan
 
                 case RemoteMenu.ActionDiagnostics:
                     ShowOverlay(!_overlayVisible);
+                    break;
+
+                case RemoteMenu.ActionRemoteCard:
+                    ShowRemoteCard();
                     break;
 
                 case RemoteMenu.ActionQuit:
@@ -3693,11 +3776,31 @@ namespace Overscan
 
         // ------------------------------------------------------------- reporting
 
+        /// <summary>
+        /// Overscan BR: what a computer needs to drive this TV, on the overlay the
+        /// diagnostics use, at reading size. Back closes it like the diagnostics.
+        /// </summary>
+        private void ShowRemoteCard()
+        {
+            _overlayVisible = true;
+            _overlay.PointSize = NuiTheme.Pt(14);
+            _overlay.Text = "CONTROLE PELO COMPUTADOR\n\n" +
+                            "IP desta TV:   " + LocalAddress() + "\n" +
+                            "Chave:   " + RemoteKey() + "\n\n" +
+                            "No computador, na mesma rede de casa, guarde a chave em tv_chave.txt\n" +
+                            "e o IP em tv_ip.txt, ao lado do tv.py. Depois:\n\n" +
+                            "    python3 tv.py site ge.globo.com\n\n" +
+                            "A chave é só desta TV. Voltar fecha este cartão.";
+            _overlay.Show();
+            _overlay.RaiseToTop();
+        }
+
         private void ShowOverlay(bool visible)
         {
             _overlayVisible = visible;
             if (visible)
             {
+                _overlay.PointSize = 9;
                 _overlay.Text = Report();
                 _overlay.Show();
                 _overlay.RaiseToTop();

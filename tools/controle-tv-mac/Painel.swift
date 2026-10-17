@@ -54,6 +54,9 @@ struct Painel: View {
     let modelo: ModeloTV
     /// Sem controles do AppKit, para a imagem de conferencia.
     var estatico = false
+    /// Presente quando o painel mora na janela normal: mostra o botao de fechar
+    /// e deixa arrastar a janela pelo fundo.
+    var aoFechar: (() -> Void)?
 
     @State private var endereco = ""
     @FocusState private var campoFocado: Bool
@@ -83,7 +86,14 @@ struct Painel: View {
         .padding(.top, 18)
         .padding(.bottom, 12)
         .frame(width: Self.largura)
-        .background(Paleta.fundo)
+        .background {
+            ZStack {
+                Paleta.fundo
+                if aoFechar != nil && !estatico {
+                    ArrastaJanela()
+                }
+            }
+        }
         .overlay {
             if modelo.ajustesAbertos {
                 PainelAjustes(modelo: modelo, estatico: estatico)
@@ -99,8 +109,8 @@ struct Painel: View {
         )
         .background {
             if !estatico {
-                AcessoJanela { janela, visivel in
-                    modelo.janela(janela, visivel: visivel)
+                AcessoJanela { origem, janela, visivel in
+                    modelo.janela(janela, visivel: visivel, origem: origem)
                 }
             }
         }
@@ -469,6 +479,19 @@ struct Painel: View {
             .font(fonte(12, .medium))
             .transition(.opacity)
             Spacer(minLength: 8)
+            if let aoFechar {
+                Button(action: aoFechar) {
+                    Image(systemName: "xmark")
+                        .font(fonte(11, .bold))
+                        .foregroundStyle(Paleta.texto2)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Paleta.cartao))
+                        .overlay(Circle().strokeBorder(Paleta.borda))
+                }
+                .buttonStyle(EstiloToque(escala: 0.9))
+                .help("Fechar a janela (o app continua no Dock e na barra de menus)")
+                .accessibilityLabel("Fechar a janela")
+            }
             Button {
                 modelo.ajustesAbertos = true
             } label: {
@@ -799,7 +822,22 @@ struct PainelAjustes: View {
                 Text("Arquivos em Application Support, pasta Controle TV")
                     .font(fonte(11, .medium))
                     .foregroundStyle(Paleta.texto3)
-                    .padding(.bottom, 18)
+                    .padding(.bottom, 12)
+
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "menubar.rectangle")
+                        .font(fonte(12, .semibold))
+                        .foregroundStyle(Paleta.texto2)
+                        .padding(.top, 1)
+                    Text("Se o ícone não aparecer na barra de menus, ela pode estar cheia: segure Command e arraste ícones para liberar espaço, ou veja Ajustes do Sistema > Barra de Menus.")
+                        .font(fonte(12, .medium))
+                        .foregroundStyle(Paleta.texto2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Paleta.cartao))
+                .padding(.bottom, 18)
 
                 HStack(spacing: 10) {
                     Button {
@@ -863,7 +901,7 @@ struct PainelAjustes: View {
 
 /// Avisa quando o painel aparece ou some, e entrega a janela para o teclado.
 struct AcessoJanela: NSViewRepresentable {
-    let aoMudar: @MainActor (NSWindow?, Bool) -> Void
+    let aoMudar: @MainActor (ObjectIdentifier, NSWindow?, Bool) -> Void
 
     func makeNSView(context: Context) -> VistaObservadora {
         let vista = VistaObservadora()
@@ -877,7 +915,7 @@ struct AcessoJanela: NSViewRepresentable {
 }
 
 final class VistaObservadora: NSView {
-    var aoMudar: (@MainActor (NSWindow?, Bool) -> Void)?
+    var aoMudar: (@MainActor (ObjectIdentifier, NSWindow?, Bool) -> Void)?
     private var observadores: [NSObjectProtocol] = []
     private var estavaVisivel = false
 
@@ -908,7 +946,7 @@ final class VistaObservadora: NSView {
     private func avisar(fechando: Bool = false) {
         guard let janela = window else {
             estavaVisivel = false
-            aoMudar?(nil, false)
+            aoMudar?(ObjectIdentifier(self), nil, false)
             return
         }
         let visivel = !fechando && janela.isVisible && janela.occlusionState.contains(.visible)
@@ -923,7 +961,7 @@ final class VistaObservadora: NSView {
             }
         }
         estavaVisivel = visivel
-        aoMudar?(janela, visivel)
+        aoMudar?(ObjectIdentifier(self), janela, visivel)
     }
 
     /// No macOS 26 a janela da barra de menus vem com um fundo de vidro de cantos
@@ -948,5 +986,19 @@ final class VistaObservadora: NSView {
         varrer(raiz, nivel: 0)
         CATransaction.commit()
         if mudou { janela.invalidateShadow() }
+    }
+}
+
+/// Fundo que arrasta a janela normal (nos espacos vazios do painel).
+struct ArrastaJanela: NSViewRepresentable {
+    func makeNSView(context: Context) -> VistaArrasto { VistaArrasto() }
+    func updateNSView(_ vista: VistaArrasto, context: Context) {}
+}
+
+final class VistaArrasto: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with evento: NSEvent) {
+        window?.performDrag(with: evento)
     }
 }

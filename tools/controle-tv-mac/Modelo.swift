@@ -52,6 +52,8 @@ final class ModeloTV {
     @ObservationIgnored private var tarefaAcesa: Task<Void, Never>?
     @ObservationIgnored private var acaoPelaRede: Bool?
     @ObservationIgnored private var visivel = false
+    /// Janelas com o painel na tela agora (o da barra de menus e a janela normal).
+    @ObservationIgnored private var janelasVisiveis: [ObjectIdentifier: NSWindow] = [:]
     @ObservationIgnored private let offline: Bool
     @ObservationIgnored let teclado = TecladoDoPainel()
 
@@ -81,14 +83,22 @@ final class ModeloTV {
 
     // MARK: - Painel aberto e fechado
 
-    func janela(_ janela: NSWindow?, visivel agora: Bool) {
-        if let janela, agora {
-            teclado.ligar(janela: janela, modelo: self)
+    /// Chamado por cada painel (barra de menus ou janela) quando aparece ou some.
+    /// Os dois dividem este modelo: uma conexao so, aberta enquanto algum estiver na tela.
+    func janela(_ janela: NSWindow?, visivel: Bool, origem: ObjectIdentifier) {
+        if let janela, visivel {
+            janelasVisiveis[origem] = janela
+        } else {
+            janelasVisiveis[origem] = nil
+        }
+        let agora = !janelasVisiveis.isEmpty
+        if agora {
+            teclado.ligar(janelas: Array(janelasVisiveis.values), modelo: self)
         } else {
             teclado.desligar()
         }
-        guard agora != visivel else { return }
-        visivel = agora
+        guard agora != self.visivel else { return }
+        self.visivel = agora
         guard !offline else { return }
 
         if agora {
@@ -341,11 +351,11 @@ final class ModeloTV {
 final class TecladoDoPainel {
     private var monitor: Any?
     private var ultimaRepeticao = Date.distantPast
-    private weak var janela: NSWindow?
+    private var janelas: [NSWindow] = []
     private weak var modelo: ModeloTV?
 
-    func ligar(janela: NSWindow, modelo: ModeloTV) {
-        self.janela = janela
+    func ligar(janelas: [NSWindow], modelo: ModeloTV) {
+        self.janelas = janelas
         self.modelo = modelo
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] evento in
@@ -356,10 +366,13 @@ final class TecladoDoPainel {
     func desligar() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        janelas = []
     }
 
     private func tratar(_ evento: NSEvent) -> NSEvent? {
-        guard let janela, let modelo, evento.window === janela else { return evento }
+        guard let modelo, let janela = evento.window, janelas.contains(where: { $0 === janela }) else {
+            return evento
+        }
         if !evento.modifierFlags.intersection([.command, .control, .option]).isEmpty { return evento }
         let editando = janela.firstResponder is NSText
 

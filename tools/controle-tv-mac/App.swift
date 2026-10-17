@@ -26,22 +26,114 @@ enum Entrada {
             }
             RunLoop.main.run()
         }
+        posicaoInicialNaBarra()
         ControleDaTVApp.main()
+    }
+
+    /// Na primeira abertura, pede ao macOS para colocar o item perto do relogio.
+    /// Num MacBook com notch e barra cheia, os itens escondidos primeiro sao os
+    /// mais perto do notch; os da ponta direita ficam a vista. O numero e a
+    /// distancia da borda direita (a Central de Controle fica perto de 160 a 200,
+    /// a bateria perto de 260). Item-0 e o nome que o MenuBarExtra da ao item.
+    /// So vale uma vez: se a pessoa arrastar o item com Command, o lugar dela fica.
+    private static func posicaoInicialNaBarra() {
+        let padroes = UserDefaults.standard
+        let marca = "posicaoInicialNaBarraDefinida"
+        let chave = "NSStatusItem Preferred Position Item-0"
+        guard !padroes.bool(forKey: marca) else { return }
+        if padroes.object(forKey: chave) == nil {
+            padroes.set(230, forKey: chave)
+        }
+        padroes.set(true, forKey: marca)
     }
 }
 
 struct ControleDaTVApp: App {
-    @State private var modelo = ModeloTV()
+    @NSApplicationDelegateAdaptor(Delegado.self) private var delegado
 
     var body: some Scene {
         MenuBarExtra {
-            Painel(modelo: modelo)
+            Painel(modelo: delegado.modelo)
         } label: {
-            Image(systemName: "tv")
-                .accessibilityLabel("Controle da TV")
+            // Icone e texto, para o item ser facil de achar na barra.
+            HStack(spacing: 4) {
+                Image(systemName: "tv")
+                Text("TV")
+            }
+            .accessibilityLabel("Controle da TV")
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+// MARK: - Janela normal
+
+/// Dono do modelo (uma conexao so para os dois paineis) e da janela normal, que
+/// abre junto com o app e volta pelo icone do Dock. Assim o controle fica ao
+/// alcance mesmo quando a barra de menus esconde o icone (notch, barra cheia).
+@MainActor
+final class Delegado: NSObject, NSApplicationDelegate {
+    let modelo = ModeloTV()
+    private var janela: JanelaDoPainel?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        mostrarJanela()
+    }
+
+    func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        mostrarJanela()
+        return false
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
+        false
+    }
+
+    func mostrarJanela() {
+        if janela == nil {
+            let painel = Painel(modelo: modelo, aoFechar: { [weak self] in self?.janela?.close() })
+            let hospedeiro = NSHostingView(rootView: painel)
+            hospedeiro.frame.size = hospedeiro.fittingSize
+            let nova = JanelaDoPainel(conteudo: hospedeiro)
+            if !nova.setFrameUsingName("JanelaDoPainel") {
+                nova.center()
+            }
+            nova.setFrameAutosaveName("JanelaDoPainel")
+            janela = nova
+        }
+        guard let janela else { return }
+        janela.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        // A sombra segue a forma arredondada do painel depois do primeiro desenho.
+        DispatchQueue.main.async { [weak janela] in janela?.invalidateShadow() }
+    }
+}
+
+/// Janela sem moldura: quem desenha a forma, os cantos e a borda e o proprio painel.
+final class JanelaDoPainel: NSWindow {
+    convenience init(conteudo: NSView) {
+        self.init(
+            contentRect: NSRect(origin: .zero, size: conteudo.frame.size),
+            styleMask: [.borderless, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        title = "Controle da TV"
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        isReleasedWhenClosed = false
+        collectionBehavior.insert(.fullScreenNone)
+        contentView = conteudo
+    }
+
+    // Sem moldura a janela nao aceitaria teclado (campo de endereco, setas).
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+
+    // Command W e Command M do menu tambem valem sem os botoes da moldura.
+    override func performClose(_ sender: Any?) { close() }
+    override func performMiniaturize(_ sender: Any?) { miniaturize(sender) }
 }
 
 // MARK: - Conferencia sem tocar na TV

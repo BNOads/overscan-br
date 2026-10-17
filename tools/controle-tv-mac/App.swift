@@ -3,9 +3,11 @@ import SwiftUI
 
 // Argumentos escondidos, para conferir o app sem mexer na TV:
 //   --snapshot arquivo.png    desenha o painel com dados de exemplo e sai
-//                             (--variante fechado, espera, aviso ou ajustes mostra outros estados)
+//                             (--variante fechado, abrindo, espera, aviso ou ajustes mostra outros estados)
 //   --icone pasta.iconset     desenha o icone do app em todos os tamanhos e sai
 //   --testar-conexao          le os dois status e abre o canal do controle sem mandar nada
+//   --testar-abertura         abre o Overscan BR pelo lancador da TV e espera ele responder
+//   --observar-canal          abre o canal do controle e so escuta por 90 s, anotando cada evento
 @main
 enum Entrada {
     @MainActor
@@ -19,6 +21,18 @@ enum Entrada {
         }
         if let i = argumentos.firstIndex(of: "--icone"), i + 1 < argumentos.count {
             exit(Conferencia.gravarIcone(pasta: argumentos[i + 1]) ? 0 : 1)
+        }
+        if argumentos.contains("--testar-abertura") {
+            Task { @MainActor in
+                exit(await Conferencia.testarAbertura())
+            }
+            RunLoop.main.run()
+        }
+        if argumentos.contains("--observar-canal") {
+            Task { @MainActor in
+                exit(await Conferencia.observarCanal(segundos: 90))
+            }
+            RunLoop.main.run()
         }
         if argumentos.contains("--testar-conexao") {
             Task { @MainActor in
@@ -93,9 +107,16 @@ final class Delegado: NSObject, NSApplicationDelegate {
         if janela == nil {
             let painel = Painel(modelo: modelo, aoFechar: { [weak self] in self?.janela?.close() })
             let hospedeiro = NSHostingView(rootView: painel)
-            hospedeiro.frame.size = hospedeiro.fittingSize
+            let tamanho = hospedeiro.fittingSize
+            hospedeiro.frame.size = tamanho
             let nova = JanelaDoPainel(conteudo: hospedeiro)
-            if !nova.setFrameUsingName("JanelaDoPainel") {
+            if nova.setFrameUsingName("JanelaDoPainel") {
+                // Lugar salvo, tamanho sempre o do painel (que pode ter mudado de versao).
+                var quadro = nova.frame
+                quadro.origin.y += quadro.height - tamanho.height
+                quadro.size = tamanho
+                nova.setFrame(quadro, display: false)
+            } else {
                 nova.center()
             }
             nova.setFrameAutosaveName("JanelaDoPainel")
@@ -146,12 +167,18 @@ enum Conferencia {
         case "fechado":
             modelo.navegador = .fechado
             modelo.canal = .conectando
+            modelo.ligacao = .conectando
+        case "abrindo":
+            modelo.navegador = .fechado
+            modelo.abrindoOverscan = true
+            modelo.progressoSite = "Abrindo o Overscan BR…"
         case "espera":
             modelo.estadoTV = .emEspera
             modelo.navegador = .outro
             modelo.nivelLetra = 2
         case "aviso":
             modelo.estadoTV = .foraDaRede
+            modelo.ligacao = .foraDaRede
             modelo.navegador = .fechado
             modelo.aviso = Aviso(texto: "Abra o Overscan BR na TV", tipo: .info)
         case "ajustes":
@@ -194,6 +221,41 @@ enum Conferencia {
             return false
         }
         return (try? dados.write(to: URL(fileURLWithPath: caminho))) != nil
+    }
+
+    /// Abre o Overscan BR pelo lancador (o mesmo caminho do botao) e espera a
+    /// porta 8081 responder. Nao manda tecla, site nem acao.
+    @MainActor
+    static func testarAbertura() async -> Int32 {
+        let modelo = ModeloTV()
+        print("TV: \(modelo.ip)")
+        let inicio = Date()
+        let deuCerto = await modelo.garantirOverscan()
+        let tempo = String(format: "%.1f", Date().timeIntervalSince(inicio))
+        switch modelo.navegador {
+        case .telaInicial: print("Overscan BR: aberto, tela inicial (\(tempo) s)")
+        case .site(let host): print("Overscan BR: aberto, \(host) (\(tempo) s)")
+        default: print("Overscan BR: não respondeu em \(tempo) s (\(modelo.aviso?.texto ?? "-"))")
+        }
+        return deuCerto ? 0 : 1
+    }
+
+    /// Abre o canal do controle e so escuta, anotando cada evento e cada queda.
+    /// Nenhuma tecla e enviada.
+    @MainActor
+    static func observarCanal(segundos: Double) async -> Int32 {
+        let salvo = UserDefaults.standard.string(forKey: "ipDaTV") ?? ""
+        let ip = salvo.isEmpty ? ModeloTV.ipPadrao : salvo
+        let inicio = Date()
+        func agora() -> String { String(format: "%6.1f s", Date().timeIntervalSince(inicio)) }
+        let canal = CanalRemoto(ip: ip)
+        canal.registrar = { print("\(agora())  \($0)"); fflush(stdout) }
+        canal.aoMudar = { print("\(agora())  estado: \($0)"); fflush(stdout) }
+        canal.ligar()
+        try? await Task.sleep(for: .seconds(segundos))
+        canal.desligar()
+        print("\(agora())  fim")
+        return 0
     }
 
     /// So le: os dois status e o aperto de mao do canal do controle. Nenhuma tecla,

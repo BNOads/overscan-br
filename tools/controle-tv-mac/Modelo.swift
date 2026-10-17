@@ -1,12 +1,23 @@
 import AppKit
 import Foundation
 import Observation
+import OSLog
 
 enum EstadoTV: Equatable {
     case verificando
     case ligada
     case emEspera
     case foraDaRede
+}
+
+/// O que o rodape mostra sobre o controle. Nao e o estado cru da conexao: uma
+/// queda seguida de volta em poucos segundos continua "conectado", para o
+/// rodape nao piscar.
+enum Ligacao: Equatable {
+    case conectando
+    case conectado
+    case foraDaRede
+    case recusado
 }
 
 struct Aviso: Equatable, Identifiable {
@@ -21,6 +32,8 @@ struct Aviso: Equatable, Identifiable {
 @Observable
 final class ModeloTV {
     static let ipPadrao = "192.168.0.106"
+    /// App lancador instalado na TV que abre o Overscan BR.
+    static let lancador = "BNOadsAbre.AbrirOverscanBR"
     private static let chaveIP = "ipDaTV"
 
     /// Tecla do controle usada quando o Overscan BR da TV ainda nao entende /acao.
@@ -40,10 +53,15 @@ final class ModeloTV {
     var modeloTV = ""
     var navegador: EstadoNavegador = .verificando
     var canal: CanalRemoto.Estado = .parado
+    var ligacao: Ligacao = .conectando
     var aviso: Aviso?
     var nivelLetra = 0
     var teclaAcesa: String?
     var ajustesAbertos = false
+    /// O lancador da TV esta abrindo o Overscan BR.
+    var abrindoOverscan = false
+    /// Texto mostrado no campo de endereco enquanto um site espera o navegador abrir.
+    var progressoSite: String?
 
     @ObservationIgnored private var remoto: CanalRemoto?
     @ObservationIgnored private var tarefaStatus: Task<Void, Never>?
@@ -51,6 +69,11 @@ final class ModeloTV {
     @ObservationIgnored private var tarefaSoltar: Task<Void, Never>?
     @ObservationIgnored private var tarefaAcesa: Task<Void, Never>?
     @ObservationIgnored private var acaoPelaRede: Bool?
+    @ObservationIgnored private var tarefaOverscan: Task<Bool, Never>?
+    @ObservationIgnored private var ultimoConectado: Date?
+    @ObservationIgnored private var inicioTentativa: Date?
+    @ObservationIgnored private var tarefaLigacao: Task<Void, Never>?
+    private static let diario = Logger(subsystem: "com.bnoads.controletv", category: "canal")
     @ObservationIgnored private var visivel = false
     /// Janelas com o painel na tela agora (o da barra de menus e a janela normal).
     @ObservationIgnored private var janelasVisiveis: [ObjectIdentifier: NSWindow] = [:]
@@ -64,6 +87,7 @@ final class ModeloTV {
         guard !offline else { return }
         let canal = CanalRemoto(ip: ip)
         canal.aoMudar = { [weak self] novo in self?.canalMudou(novo) }
+        canal.registrar = { texto in Self.diario.info("\(texto, privacy: .public)") }
         remoto = canal
     }
 
@@ -75,6 +99,7 @@ final class ModeloTV {
         m.modeloTV = "QN55QEF1AGXZD"
         m.navegador = .site("ge.globo.com")
         m.canal = .conectado
+        m.ligacao = .conectado
         return m
     }
 
@@ -99,6 +124,7 @@ final class ModeloTV {
         }
         guard agora != self.visivel else { return }
         self.visivel = agora
+        defer { avaliarLigacao() }
         guard !offline else { return }
 
         if agora {
@@ -145,6 +171,7 @@ final class ModeloTV {
             estadoTV = .foraDaRede
         }
         definirNavegador(estadoNav ?? .fechado)
+        avaliarLigacao()
     }
 
     private func definirNavegador(_ novo: EstadoNavegador) {
@@ -165,9 +192,59 @@ final class ModeloTV {
     }
 
     private func canalMudou(_ novo: CanalRemoto.Estado) {
+        let anterior = canal
         canal = novo
+        let agora = Date()
+        Self.diario.info("canal: \(String(describing: novo), privacy: .public)")
+        if novo == .conectado || anterior == .conectado {
+            // Conectou agora, ou acabou de cair: conta como "conectado ate agora".
+            ultimoConectado = agora
+        }
+        switch novo {
+        case .conectando: if inicioTentativa == nil { inicioTentativa = agora }
+        default: inicioTentativa = nil
+        }
+        avaliarLigacao()
         if novo == .recusado {
             mostrar("A TV recusou o controle. Aceite o Mac do JP na TV", .alerta)
+        }
+    }
+
+    /// Decide o que o rodape mostra, sem piscar:
+    /// - fora da rede e recusa aparecem na hora;
+    /// - conectado aparece na hora e continua por 10 s depois de uma queda,
+    ///   tempo em que a reconexao normalmente ja voltou;
+    /// - "Conectando…" so aparece se a tentativa passar de 3 s.
+    private func avaliarLigacao() {
+        let agora = Date()
+        var reavaliarEm: Double?
+        let nova: Ligacao
+        if estadoTV == .foraDaRede {
+            nova = .foraDaRede
+        } else if canal == .recusado {
+            nova = .recusado
+        } else if canal == .conectado {
+            nova = .conectado
+        } else if canal == .parado && !visivel {
+            return // painel fechado: fica como estava ate abrir de novo
+        } else if let ultimo = ultimoConectado, agora.timeIntervalSince(ultimo) < 10 {
+            nova = .conectado
+            reavaliarEm = 10 - agora.timeIntervalSince(ultimo)
+        } else if ligacao == .conectado, let inicio = inicioTentativa, agora.timeIntervalSince(inicio) < 3 {
+            nova = .conectado
+            reavaliarEm = 3 - agora.timeIntervalSince(inicio)
+        } else {
+            nova = .conectando
+        }
+        if nova != ligacao { ligacao = nova }
+
+        tarefaLigacao?.cancel()
+        if let reavaliarEm {
+            tarefaLigacao = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(reavaliarEm + 0.05))
+                guard !Task.isCancelled else { return }
+                self?.avaliarLigacao()
+            }
         }
     }
 
@@ -206,9 +283,10 @@ final class ModeloTV {
     // MARK: - Navegador
 
     /// Manda o endereco para o Overscan BR. Devolve true se a TV aceitou.
+    /// Com o Overscan BR fechado, abre ele antes pelo lancador e espera responder.
     func abrirSite(_ digitado: String) async -> Bool {
         let endereco = digitado.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !endereco.isEmpty, !offline else { return false }
+        guard !endereco.isEmpty, !offline, progressoSite == nil else { return false }
         guard let chave = Arquivos.ler(Arquivos.chave) else {
             mostrar("Chave do Overscan BR não encontrada", .alerta)
             return false
@@ -216,34 +294,56 @@ final class ModeloTV {
         guard let url = URL(string: "http://\(ip):8081/abrir?chave=\(Rede.codificar(chave))&url=\(Rede.codificar(endereco))") else {
             return false
         }
-        switch await Rede.pedir(url, tempo: 4) {
+        defer { progressoSite = nil }
+
+        if navegador == .fechado {
+            guard await prepararOverscan(comProgresso: true) else { return false }
+        }
+        var resposta = await Rede.pedir(url, tempo: 4)
+        if case .recusada = resposta {
+            // O status estava atrasado: o navegador fechou. Abre e tenta de novo, uma vez.
+            definirNavegador(.fechado)
+            guard await prepararOverscan(comProgresso: true) else { return false }
+            resposta = await Rede.pedir(url, tempo: 4)
+        }
+
+        switch resposta {
         case .texto(let bruto):
-            let resposta = bruto.trimmingCharacters(in: .whitespacesAndNewlines)
-            if resposta.hasPrefix("ok") {
+            let texto = bruto.trimmingCharacters(in: .whitespacesAndNewlines)
+            if texto.hasPrefix("ok") {
                 mostrar("Abrindo \(Rede.hostLegivel(endereco)) na TV", .ok)
                 atualizarDaqui(a: 2)
                 return true
             }
-            if resposta.contains("Overscan diagnostics") {
+            if texto.contains("Overscan diagnostics") {
                 mostrar("Esse navegador não abre sites pelo Mac. Abra o Overscan BR na TV", .info)
             } else {
-                mostrar(Self.primeiraLinha(resposta), .alerta)
+                mostrar(Self.primeiraLinha(texto), .alerta)
             }
         case .recusada:
             definirNavegador(.fechado)
-            mostrar("Abra o Overscan BR na TV", .info)
+            mostrar("Não abriu, abra pela TV", .alerta)
         case .semResposta:
             mostrar(estadoTV == .foraDaRede ? "TV fora da rede" : "A TV não respondeu", .alerta)
         }
         return false
     }
 
+    /// Acoes do navegador (favoritos, tela cheia, letra, inicio, menu). Todas
+    /// precisam do Overscan BR: se ele estiver fechado, abre antes.
     func acao(_ id: String) {
         guard !offline else {
             aplicou(id)
             return
         }
-        if acaoPelaRede == false, navegador != .fechado {
+        Task { await executarAcao(id) }
+    }
+
+    private func executarAcao(_ id: String) async {
+        if navegador == .fechado {
+            guard await prepararOverscan(comProgresso: false) else { return }
+        }
+        if acaoPelaRede == false {
             usarReserva(id)
             return
         }
@@ -252,27 +352,96 @@ final class ModeloTV {
             usarReserva(id)
             return
         }
+        var resposta = await Rede.pedir(url, tempo: 2.5)
+        if case .recusada = resposta {
+            definirNavegador(.fechado)
+            guard await prepararOverscan(comProgresso: false) else { return }
+            resposta = await Rede.pedir(url, tempo: 2.5)
+        }
+        switch resposta {
+        case .texto(let bruto):
+            let texto = bruto.trimmingCharacters(in: .whitespacesAndNewlines)
+            if texto.hasPrefix("ok") {
+                acaoPelaRede = true
+                aplicou(id)
+                return
+            }
+            // O Overscan BR antigo devolve o relatorio; um sem /acao avisa que nao aceita.
+            if texto.contains("Overscan diagnostics") || texto.contains("não aceita comandos") {
+                acaoPelaRede = false
+            }
+            usarReserva(id)
+        case .recusada:
+            definirNavegador(.fechado)
+            mostrar("Não abriu, abra pela TV", .alerta)
+        case .semResposta:
+            usarReserva(id)
+        }
+    }
+
+    // MARK: - Abrir o Overscan BR pela rede
+
+    /// Botao "Abrir Overscan BR" da linha do navegador.
+    func abrirOverscanBR() {
+        guard !offline else { return }
         Task {
-            switch await Rede.pedir(url, tempo: 2.5) {
-            case .texto(let bruto):
-                let resposta = bruto.trimmingCharacters(in: .whitespacesAndNewlines)
-                if resposta.hasPrefix("ok") {
-                    acaoPelaRede = true
-                    aplicou(id)
-                    return
-                }
-                // O Overscan BR antigo devolve o relatorio; um sem /acao avisa que nao aceita.
-                if resposta.contains("Overscan diagnostics") || resposta.contains("não aceita comandos") {
-                    acaoPelaRede = false
-                }
-                usarReserva(id)
-            case .recusada:
-                definirNavegador(.fechado)
-                mostrar("Abra o Overscan BR na TV", .info)
-            case .semResposta:
-                usarReserva(id)
+            if await garantirOverscan() {
+                mostrar("Overscan BR aberto na TV", .ok)
             }
         }
+    }
+
+    /// Abre o Overscan BR e espera mais um pouco: ele mostra a tela inicial antes
+    /// de aceitar um endereco ou uma acao.
+    private func prepararOverscan(comProgresso: Bool) async -> Bool {
+        if comProgresso { progressoSite = "Abrindo o Overscan BR…" }
+        guard await garantirOverscan() else { return false }
+        try? await Task.sleep(for: .seconds(2))
+        if comProgresso { progressoSite = "Abrindo site…" }
+        return true
+    }
+
+    /// Um lancamento por vez: quem pedir enquanto um esta em curso espera o mesmo.
+    func garantirOverscan() async -> Bool {
+        if let emCurso = tarefaOverscan { return await emCurso.value }
+        let tarefa = Task { await self.lancarOverscan() }
+        tarefaOverscan = tarefa
+        let deuCerto = await tarefa.value
+        tarefaOverscan = nil
+        return deuCerto
+    }
+
+    /// O app lancador da TV (BNOadsAbre.AbrirOverscanBR) abre o Overscan BR, que
+    /// nao pode ser aberto direto pela rede. Depois e so esperar a porta 8081
+    /// responder como "local build", conferindo a cada segundo por ate 25 s.
+    private func lancarOverscan() async -> Bool {
+        let ip = self.ip
+        guard let url = URL(string: "http://\(ip):8001/api/v2/applications/\(Self.lancador)") else { return false }
+        abrindoOverscan = true
+        defer { abrindoOverscan = false }
+
+        guard case .texto(let retorno) = await Rede.pedir(url, metodo: "POST", tempo: 5),
+              retorno.contains("true") else {
+            mostrar(estadoTV == .foraDaRede ? "TV fora da rede" : "Não abriu, abra pela TV", .alerta)
+            return false
+        }
+        let inicio = Date()
+        while Date().timeIntervalSince(inicio) < 25 {
+            try? await Task.sleep(for: .seconds(1))
+            guard ip == self.ip else { return false }
+            switch await Rede.lerNavegador(ip: ip) {
+            case .some(.telaInicial):
+                definirNavegador(.telaInicial)
+                return true
+            case .some(.site(let host)):
+                definirNavegador(.site(host))
+                return true
+            default:
+                continue
+            }
+        }
+        mostrar("Não abriu, abra pela TV", .alerta)
+        return false
     }
 
     private func usarReserva(_ id: String) {

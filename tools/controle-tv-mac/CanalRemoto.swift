@@ -39,6 +39,8 @@ final class CanalRemoto {
     static let nome = "Mac do JP"
 
     var aoMudar: ((Estado) -> Void)?
+    /// Diario opcional (so o modo --observar-canal usa). Nunca recebe o token.
+    var registrar: ((String) -> Void)?
     private(set) var estado: Estado = .parado {
         didSet {
             if estado != oldValue { aoMudar?(estado) }
@@ -106,9 +108,13 @@ final class CanalRemoto {
         fechar()
         let nome = Data(Self.nome.utf8).base64EncodedString()
         var endereco = "wss://\(ip):8002/api/v2/channels/samsung.remote.control?name=\(Rede.codificar(nome))"
-        if let token = Arquivos.ler(Arquivos.token) {
+        let token = Arquivos.ler(Arquivos.token)
+        if let token {
             endereco += "&token=\(Rede.codificar(token))"
         }
+        // Com token a TV libera em cerca de 1,5 s; sem token ela pergunta na tela
+        // e a pessoa precisa de tempo para aceitar no controle.
+        let prazo: Double = token == nil ? 30 : 10
         guard let url = URL(string: endereco) else {
             estado = .parado
             return
@@ -116,6 +122,7 @@ final class CanalRemoto {
 
         geracao += 1
         let g = geracao
+        registrar?("conectando (tentativa \(falhas + 1))")
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 8
         config.waitsForConnectivity = false
@@ -136,13 +143,15 @@ final class CanalRemoto {
                 }
             } catch {
                 guard let self, self.geracao == g else { return }
+                let codigo = novaTarefa.closeCode.rawValue
+                self.registrar?("leitura terminou: \((error as NSError).domain) \((error as NSError).code), fechamento \(codigo)")
                 self.caiu(geracao: g)
             }
         }
 
-        // Se a TV aceitar a conexao mas nunca liberar o controle, tenta de novo.
+        // Se a conexao travar (ou a TV nunca liberar o controle), tenta de novo.
         vigia = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(30))
+            try? await Task.sleep(for: .seconds(prazo))
             guard !Task.isCancelled, let self, self.geracao == g, !self.pronto else { return }
             self.caiu(geracao: g)
         }
@@ -157,6 +166,7 @@ final class CanalRemoto {
         }
         guard let json = (try? JSONSerialization.jsonObject(with: Data(texto.utf8))) as? [String: Any],
               let evento = json["event"] as? String else { return }
+        registrar?("evento \(evento)")
 
         switch evento {
         case "ms.channel.connect":
@@ -209,6 +219,7 @@ final class CanalRemoto {
                 try? await Task.sleep(for: .seconds(20))
                 guard !Task.isCancelled, let self, self.geracao == g, let t = self.tarefa else { return }
                 t.sendPing { [weak self] erro in
+                    Task { @MainActor in self?.registrar?(erro == nil ? "pong" : "ping falhou") }
                     guard erro != nil else { return }
                     Task { @MainActor in self?.caiu(geracao: g) }
                 }
@@ -225,7 +236,9 @@ final class CanalRemoto {
         }
         falhas += 1
         estado = .conectando
-        let esperas: [Double] = [1, 2, 4, 8, 12]
+        // Volta rapido uma vez (quase sempre basta) e depois espaca as tentativas.
+        // Uma tecla apertada nesse meio tempo conecta na hora (ver enviar).
+        let esperas: [Double] = [1, 3, 8, 20, 30]
         agendarReconexao(em: esperas[min(falhas - 1, esperas.count - 1)])
     }
 

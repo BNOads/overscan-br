@@ -61,29 +61,27 @@ struct Painel: View {
     @State private var endereco = ""
     @FocusState private var campoFocado: Bool
 
-    static let largura: CGFloat = 372
+    static let largura: CGFloat = 340
     static let raio: CGFloat = 22
 
     var body: some View {
         VStack(spacing: 0) {
             cabecalho
-                .padding(.bottom, 16)
+                .padding(.bottom, 14)
             linhaNavegador
-                .padding(.bottom, 11)
+                .padding(.bottom, 10)
             campoEndereco
-                .padding(.bottom, 8)
-            atalhos
-                .padding(.bottom, 16)
+                .padding(.bottom, 14)
             controle
-                .padding(.bottom, 10)
-            blocos
-                .padding(.bottom, 10)
-            volume
                 .padding(.bottom, 12)
+            blocos
+                .padding(.bottom, 8)
+            volume
+                .padding(.bottom, 10)
             rodape
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
         .padding(.bottom, 12)
         .frame(width: Self.largura)
         .background {
@@ -138,27 +136,27 @@ struct Painel: View {
     }
 
     private var cabecalho: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: "tv")
-                        .font(fonte(11, .semibold))
+                        .font(fonte(10, .semibold))
                     Text(modelo.nomeTV.isEmpty ? "Samsung" : "Samsung " + modelo.nomeTV)
                 }
-                .font(fonte(12, .semibold))
+                .font(fonte(11, .semibold))
                 .foregroundStyle(Paleta.texto2)
-                .padding(.bottom, 6)
+                .padding(.bottom, 4)
 
                 Text("TV da Sala")
-                    .font(fonte(28, .bold))
+                    .font(fonte(23, .bold))
                     .foregroundStyle(Paleta.texto)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 4)
 
-                HStack(spacing: 7) {
+                HStack(spacing: 6) {
                     Circle()
                         .fill(corEstado)
-                        .frame(width: 7, height: 7)
-                        .shadow(color: corEstado.opacity(0.7), radius: 4)
+                        .frame(width: 6, height: 6)
+                        .shadow(color: corEstado.opacity(0.7), radius: 3)
                     Text(textoEstado)
                         .foregroundStyle(Paleta.texto)
                     if !modelo.modeloTV.isEmpty {
@@ -167,16 +165,16 @@ struct Painel: View {
                             .padding(.leading, 2)
                     }
                 }
-                .font(fonte(13, .semibold))
+                .font(fonte(12, .semibold))
             }
             Spacer(minLength: 0)
             Button {
                 modelo.ligarDesligar()
             } label: {
                 Image(systemName: "power")
-                    .font(fonte(19, .semibold))
+                    .font(fonte(16, .semibold))
                     .foregroundStyle(Paleta.texto)
-                    .frame(width: 50, height: 50)
+                    .frame(width: 42, height: 42)
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.17), lineWidth: 1.5))
                     .contentShape(Circle())
             }
@@ -206,69 +204,114 @@ struct Painel: View {
     }
 
     private var linhaNavegador: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: "globe")
-                .font(fonte(16, .semibold))
+                .font(fonte(14, .semibold))
                 .foregroundStyle(navegadorAberto ? Paleta.azul : Paleta.texto2)
-                .frame(width: 40, height: 40)
-                .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Paleta.cartao))
-                .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).strokeBorder(Paleta.borda))
-            VStack(alignment: .leading, spacing: 1) {
+                .frame(width: 34, height: 34)
+                .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Paleta.cartao))
+                .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Paleta.borda))
+            VStack(alignment: .leading, spacing: 0) {
                 Text("Overscan BR")
-                    .font(fonte(12, .medium))
+                    .font(fonte(11, .medium))
                     .foregroundStyle(Paleta.texto2)
+                    .lineLimit(1)
+                    .fixedSize()
                 Text(textoNavegador)
-                    .font(fonte(16, .semibold))
+                    .font(fonte(14, .semibold))
                     .foregroundStyle(navegadorAberto ? Paleta.texto : Paleta.texto2)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 0)
             if case .site = modelo.navegador {
                 Button {
                     modelo.acao("bookmark")
                 } label: {
                     Image(systemName: "star")
-                        .font(fonte(13, .semibold))
+                        .font(fonte(12, .semibold))
                         .foregroundStyle(Paleta.texto2)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 28, height: 28)
                         .background(Circle().fill(Paleta.cartao))
                         .overlay(Circle().strokeBorder(Paleta.borda))
                 }
                 .buttonStyle(EstiloToque(escala: 0.9))
                 .help("Salvar este site nos favoritos")
                 .accessibilityLabel("Salvar nos favoritos")
-            } else if modelo.navegador == .fechado {
-                Button {
-                    modelo.abrirNavegadorSamsung()
-                } label: {
-                    Text("Navegador Samsung")
-                        .font(fonte(12, .semibold))
+            } else if modelo.abrindoOverscan {
+                HStack(spacing: 6) {
+                    Giro()
+                    Text("Abrindo…")
+                        .font(fonte(11, .semibold))
                         .foregroundStyle(Paleta.texto2)
-                        .padding(.horizontal, 12)
-                        .frame(height: 30)
-                        .background(Capsule().fill(Paleta.cartao))
-                        .overlay(Capsule().strokeBorder(Paleta.borda))
                 }
-                .buttonStyle(EstiloToque())
-                .help("Abrir o navegador da Samsung na TV")
+                .padding(.horizontal, 11)
+                .frame(height: 28)
+                .background(Capsule().fill(Paleta.cartao))
+                .overlay(Capsule().strokeBorder(Paleta.borda))
+                .transition(.opacity)
+            } else if modelo.navegador == .fechado {
+                HStack(spacing: 6) {
+                    Button {
+                        modelo.abrirOverscanBR()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "play.fill")
+                                .font(fonte(8, .bold))
+                            Text("Abrir Overscan BR")
+                                .font(fonte(11, .bold))
+                                .lineLimit(1)
+                        }
+                        .fixedSize()
+                        .foregroundStyle(Paleta.fundo)
+                        .padding(.horizontal, 11)
+                        .frame(height: 28)
+                        .background(Capsule().fill(Paleta.texto))
+                    }
+                    .buttonStyle(EstiloToque())
+                    .help("Abrir o Overscan BR na TV")
+                    Button {
+                        MenuRapido.compartilhado.mostrar([
+                            ("Abrir o navegador da Samsung", { modelo.abrirNavegadorSamsung() }),
+                        ])
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(fonte(11, .bold))
+                            .foregroundStyle(Paleta.texto2)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Paleta.cartao))
+                            .overlay(Circle().strokeBorder(Paleta.borda))
+                    }
+                    .buttonStyle(EstiloToque(escala: 0.9))
+                    .help("Mais opções")
+                    .accessibilityLabel("Mais opções")
+                }
             }
         }
     }
 
     private var campoEndereco: some View {
-        let temTexto = !endereco.trimmingCharacters(in: .whitespaces).isEmpty
-        return HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(fonte(14, .semibold))
-                .foregroundStyle(Paleta.texto2)
+        let temTexto = !endereco.trimmingCharacters(in: .whitespaces).isEmpty && modelo.progressoSite == nil
+        return HStack(spacing: 9) {
+            if modelo.progressoSite != nil {
+                Giro()
+                    .frame(width: 13)
+            } else {
+                Image(systemName: "magnifyingglass")
+                    .font(fonte(12, .semibold))
+                    .foregroundStyle(Paleta.texto2)
+            }
             ZStack(alignment: .leading) {
-                if endereco.isEmpty {
+                if let progresso = modelo.progressoSite {
+                    Text(progresso)
+                        .foregroundStyle(Paleta.texto2)
+                        .transition(.opacity)
+                } else if endereco.isEmpty {
                     Text("Abrir site na TV")
                         .foregroundStyle(Paleta.texto3)
                         .allowsHitTesting(false)
                 }
-                if !estatico {
+                if !estatico && modelo.progressoSite == nil {
                     TextField("", text: $endereco)
                         .textFieldStyle(.plain)
                         .foregroundStyle(Paleta.texto)
@@ -277,13 +320,13 @@ struct Painel: View {
                         .accessibilityLabel("Abrir site na TV")
                 }
             }
-            .font(fonte(16, .medium))
+            .font(fonte(14, .medium))
             .frame(maxWidth: .infinity, alignment: .leading)
             Button(action: enviar) {
                 Image(systemName: "arrow.up.right")
-                    .font(fonte(13, .bold))
+                    .font(fonte(11, .bold))
                     .foregroundStyle(temTexto ? Paleta.fundo : Paleta.texto3)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 28, height: 28)
                     .background(Circle().fill(temTexto ? Paleta.texto : Paleta.botao))
             }
             .buttonStyle(EstiloToque(escala: 0.9))
@@ -291,49 +334,20 @@ struct Painel: View {
             .help("Abrir na TV")
             .accessibilityLabel("Abrir na TV")
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 7)
-        .frame(height: 48)
-        .background(RoundedRectangle(cornerRadius: 17, style: .continuous).fill(Paleta.cartao))
+        .padding(.leading, 13)
+        .padding(.trailing, 6)
+        .frame(height: 40)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Paleta.cartao))
         .overlay(
-            RoundedRectangle(cornerRadius: 17, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(campoFocado ? Color.white.opacity(0.2) : Paleta.borda, lineWidth: 1)
         )
         .animation(.easeOut(duration: 0.15), value: campoFocado)
-    }
-
-    private var atalhos: some View {
-        HStack(spacing: 8) {
-            ForEach(["ge.globo.com", "google.com.br"], id: \.self) { site in
-                Button {
-                    abrir(site)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.up.forward")
-                            .font(fonte(10, .bold))
-                            .foregroundStyle(Paleta.texto3)
-                        Text(site)
-                            .font(fonte(13, .semibold))
-                            .foregroundStyle(Paleta.texto2)
-                    }
-                    .padding(.horizontal, 13)
-                    .frame(height: 29)
-                    .background(Capsule().fill(Paleta.cartao))
-                    .overlay(Capsule().strokeBorder(Paleta.borda))
-                }
-                .buttonStyle(EstiloToque())
-                .help("Abrir \(site) na TV")
-            }
-            Spacer(minLength: 0)
-        }
+        .animation(.easeOut(duration: 0.2), value: modelo.progressoSite)
     }
 
     private func enviar() {
-        abrir(endereco)
-    }
-
-    private func abrir(_ site: String) {
-        let pedido = site
+        let pedido = endereco
         Task {
             if await modelo.abrirSite(pedido), endereco == pedido {
                 endereco = ""
@@ -345,9 +359,9 @@ struct Painel: View {
     // MARK: Direcional
 
     private var controle: some View {
-        HStack(spacing: 14) {
-            Direcional(modelo: modelo, diametro: 176)
-            VStack(spacing: 10) {
+        HStack(spacing: 12) {
+            Direcional(modelo: modelo, diametro: 144)
+            VStack(spacing: 9) {
                 BotaoLateral(titulo: "Voltar", simbolo: "arrow.uturn.backward") {
                     modelo.tecla("KEY_RETURN")
                 }
@@ -363,104 +377,71 @@ struct Painel: View {
 
     // MARK: Blocos
 
-    private var textoLetra: String {
-        switch modelo.nivelLetra {
-        case 0: "Normal"
-        case let n where n > 0: "+\(n)"
-        case let n: "\u{2212}\(-n)"
-        }
-    }
-
     private var blocos: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                Button {
-                    modelo.acao("favbar")
-                } label: {
-                    Bloco(simbolo: "star.fill", cor: Paleta.vermelho, rotulo: "Barra", valor: "Favoritos",
-                          marca: Paleta.vermelho) { EmptyView() }
-                }
-                .buttonStyle(EstiloToque(escala: 0.97))
-                .help("Mostrar ou esconder a barra de favoritos (botão vermelho)")
+        HStack(spacing: 8) {
+            Button {
+                modelo.acao("favbar")
+            } label: {
+                Bloco(simbolo: "star.fill", cor: Paleta.vermelho, rotulo: "Barra", valor: "Favoritos")
+            }
+            .buttonStyle(EstiloToque(escala: 0.97))
+            .help("Mostrar ou esconder a barra de favoritos (botão vermelho)")
 
-                Button {
-                    modelo.acao("videofull")
-                } label: {
-                    Bloco(simbolo: "arrow.up.left.and.arrow.down.right", cor: Paleta.azul, rotulo: "Vídeo",
-                          valor: "Tela cheia", marca: Paleta.azul) { EmptyView() }
-                }
-                .buttonStyle(EstiloToque(escala: 0.97))
-                .help("Vídeo em tela cheia (botão azul)")
+            Button {
+                modelo.acao("videofull")
+            } label: {
+                Bloco(simbolo: "arrow.up.left.and.arrow.down.right", cor: Paleta.azul, rotulo: "Vídeo",
+                      valor: "Tela cheia")
             }
-            HStack(spacing: 10) {
-                Bloco(simbolo: "textformat.size", cor: Paleta.amarelo, rotulo: "Letra", valor: textoLetra,
-                      aoTocarValor: { modelo.acao("zoomreset") }) {
-                    HStack(spacing: 7) {
-                        BotaoRedondo(simbolo: "minus", cor: Paleta.amarelo, dica: "Diminuir a letra (botão amarelo)") {
-                            modelo.acao("zoomout")
-                        }
-                        BotaoRedondo(simbolo: "plus", cor: Paleta.verdeTecla, dica: "Aumentar a letra (botão verde)") {
-                            modelo.acao("zoomin")
-                        }
-                    }
-                }
-                Bloco(simbolo: "arrow.up.arrow.down", cor: Paleta.lilas, rotulo: "Página", valor: "Rolar") {
-                    HStack(spacing: 7) {
-                        BotaoRedondo(simbolo: "chevron.up", dica: "Rolar para cima") {
-                            modelo.tecla("KEY_CHUP")
-                        }
-                        BotaoRedondo(simbolo: "chevron.down", dica: "Rolar para baixo") {
-                            modelo.tecla("KEY_CHDOWN")
-                        }
-                    }
-                }
-            }
+            .buttonStyle(EstiloToque(escala: 0.97))
+            .help("Vídeo em tela cheia (botão azul)")
         }
     }
 
     // MARK: Volume
 
     private var volume: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: "speaker.wave.2.fill")
-                .font(fonte(13, .semibold))
+                .font(fonte(11, .semibold))
                 .foregroundStyle(Paleta.texto)
-                .frame(width: 32, height: 32)
+                .frame(width: 26, height: 26)
                 .background(Circle().fill(Color.white.opacity(0.09)))
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text("Som")
-                    .font(fonte(12, .medium))
+                    .font(fonte(11, .medium))
                     .foregroundStyle(Paleta.texto2)
                 Text("Volume")
-                    .font(fonte(17, .bold))
+                    .font(fonte(15, .bold))
                     .foregroundStyle(Paleta.texto)
             }
             Spacer(minLength: 0)
-            BotaoRedondo(simbolo: "minus", tamanho: 38, dica: "Baixar o volume") {
+            BotaoRedondo(simbolo: "minus", tamanho: 32, dica: "Baixar o volume") {
                 modelo.tecla("KEY_VOLDOWN")
             }
-            BotaoRedondo(simbolo: "speaker.slash.fill", tamanho: 38, dica: "Mudo") {
+            BotaoRedondo(simbolo: "speaker.slash.fill", tamanho: 32, dica: "Mudo") {
                 modelo.tecla("KEY_MUTE")
             }
-            BotaoRedondo(simbolo: "plus", tamanho: 38, dica: "Aumentar o volume") {
+            BotaoRedondo(simbolo: "plus", tamanho: 32, dica: "Aumentar o volume") {
                 modelo.tecla("KEY_VOLUP")
             }
         }
-        .padding(.horizontal, 14)
-        .frame(height: 60)
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Paleta.cartao))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Paleta.borda))
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .frame(height: 50)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Paleta.cartao))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Paleta.borda))
     }
 
     // MARK: Rodape
 
     private var rodape: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Group {
                 if let aviso = modelo.aviso {
-                    HStack(spacing: 7) {
+                    HStack(spacing: 6) {
                         Image(systemName: simbolo(de: aviso.tipo))
-                            .font(fonte(12, .semibold))
+                            .font(fonte(11, .semibold))
                             .foregroundStyle(cor(de: aviso.tipo))
                         Text(aviso.texto)
                             .foregroundStyle(Paleta.texto)
@@ -469,22 +450,22 @@ struct Painel: View {
                     }
                     .id(aviso.id)
                 } else {
-                    HStack(spacing: 7) {
+                    HStack(spacing: 6) {
                         indicadorConexao
                         Text(textoConexao)
                             .foregroundStyle(Paleta.texto2)
                     }
                 }
             }
-            .font(fonte(12, .medium))
+            .font(fonte(11, .medium))
             .transition(.opacity)
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
             if let aoFechar {
                 Button(action: aoFechar) {
                     Image(systemName: "xmark")
-                        .font(fonte(11, .bold))
+                        .font(fonte(9, .bold))
                         .foregroundStyle(Paleta.texto2)
-                        .frame(width: 30, height: 30)
+                        .frame(width: 26, height: 26)
                         .background(Circle().fill(Paleta.cartao))
                         .overlay(Circle().strokeBorder(Paleta.borda))
                 }
@@ -496,9 +477,9 @@ struct Painel: View {
                 modelo.ajustesAbertos = true
             } label: {
                 Image(systemName: "gearshape.fill")
-                    .font(fonte(14, .medium))
+                    .font(fonte(12, .medium))
                     .foregroundStyle(Paleta.texto2)
-                    .frame(width: 30, height: 30)
+                    .frame(width: 26, height: 26)
                     .background(Circle().fill(Paleta.cartao))
                     .overlay(Circle().strokeBorder(Paleta.borda))
             }
@@ -506,30 +487,32 @@ struct Painel: View {
             .help("Ajustes")
             .accessibilityLabel("Ajustes")
         }
-        .frame(height: 32)
+        .frame(height: 28)
         .animation(.easeOut(duration: 0.2), value: modelo.aviso)
+        .animation(.easeOut(duration: 0.25), value: modelo.ligacao)
     }
 
     private var textoConexao: String {
-        if modelo.estadoTV == .foraDaRede { return "TV fora da rede" }
-        switch modelo.canal {
-        case .conectado: return "Conectado à TV"
-        case .recusado: return "A TV recusou o controle"
-        case .conectando, .parado: return "Conectando…"
+        switch modelo.ligacao {
+        case .conectado: "Conectado à TV"
+        case .conectando: "Conectando…"
+        case .foraDaRede: "TV fora da rede"
+        case .recusado: "A TV recusou o controle"
         }
     }
 
     @ViewBuilder
     private var indicadorConexao: some View {
-        if modelo.estadoTV == .foraDaRede || modelo.canal == .recusado {
-            Circle().fill(Paleta.vermelho).frame(width: 6, height: 6)
-        } else if modelo.canal == .conectado {
+        switch modelo.ligacao {
+        case .conectado:
             Circle()
                 .fill(Paleta.verde)
                 .frame(width: 6, height: 6)
                 .shadow(color: Paleta.verde.opacity(0.7), radius: 3)
-        } else {
+        case .conectando:
             Giro()
+        case .foraDaRede, .recusado:
+            Circle().fill(Paleta.vermelho).frame(width: 6, height: 6)
         }
     }
 
@@ -552,13 +535,13 @@ struct Painel: View {
 
 // MARK: - Pecas
 
-/// Circulo grande com quatro setas e o OK no meio.
+/// Circulo com quatro setas e o OK no meio.
 struct Direcional: View {
     let modelo: ModeloTV
     let diametro: CGFloat
 
     var body: some View {
-        let distancia = diametro * 0.345
+        let distancia = diametro * 0.35
         ZStack {
             Circle()
                 .fill(LinearGradient(colors: [Color(hex: 0x1C1D23), Color(hex: 0x141519)],
@@ -573,15 +556,15 @@ struct Direcional: View {
                 modelo.tecla("KEY_ENTER")
             } label: {
                 Text("OK")
-                    .font(fonte(18, .bold))
+                    .font(fonte(15, .bold))
                     .foregroundStyle(Paleta.texto)
-                    .frame(width: diametro * 0.42, height: diametro * 0.42)
+                    .frame(width: diametro * 0.41, height: diametro * 0.41)
                     .background(
                         Circle().fill(LinearGradient(colors: [Color(hex: 0x2C2E35), Color(hex: 0x212329)],
                                                      startPoint: .top, endPoint: .bottom))
                     )
                     .overlay(Circle().strokeBorder(Color.white.opacity(modelo.teclaAcesa == "KEY_ENTER" ? 0.3 : 0.09)))
-                    .shadow(color: .black.opacity(0.45), radius: 10, y: 5)
+                    .shadow(color: .black.opacity(0.45), radius: 8, y: 4)
                     .scaleEffect(modelo.teclaAcesa == "KEY_ENTER" ? 0.95 : 1)
                     .contentShape(Circle())
             }
@@ -612,9 +595,9 @@ struct EstiloSeta: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         let ativo = acesa || configuration.isPressed
         Image(systemName: simbolo)
-            .font(fonte(16, .bold))
+            .font(fonte(13, .bold))
             .foregroundStyle(ativo ? Paleta.texto : Paleta.texto2)
-            .frame(width: 46, height: 46)
+            .frame(width: 38, height: 38)
             .background(Circle().fill(Color.white.opacity(ativo ? 0.09 : 0)))
             .contentShape(Circle())
             .scaleEffect(configuration.isPressed ? 0.92 : 1)
@@ -629,23 +612,23 @@ struct BotaoLateral: View {
 
     var body: some View {
         Button(action: acao) {
-            HStack(spacing: 10) {
+            HStack(spacing: 9) {
                 Image(systemName: simbolo)
-                    .font(fonte(13, .semibold))
+                    .font(fonte(11, .semibold))
                     .foregroundStyle(Paleta.texto)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 26, height: 26)
                     .background(Circle().fill(Paleta.botao))
                 Text(titulo)
-                    .font(fonte(15, .semibold))
+                    .font(fonte(13, .semibold))
                     .foregroundStyle(Paleta.texto)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Paleta.cartao))
-            .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Paleta.borda))
-            .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .frame(height: 42)
+            .background(RoundedRectangle(cornerRadius: 21, style: .continuous).fill(Paleta.cartao))
+            .overlay(RoundedRectangle(cornerRadius: 21, style: .continuous).strokeBorder(Paleta.borda))
+            .contentShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
         }
         .buttonStyle(EstiloToque())
         .accessibilityLabel(titulo)
@@ -676,65 +659,46 @@ struct BotaoRedondo: View {
 }
 
 /// Bloco no estilo do widget: icone em cima, rotulo cinza, valor em negrito.
-struct Bloco<Controles: View>: View {
+/// O ponto colorido no canto lembra o botao do controle da TV que faz o mesmo.
+struct Bloco: View {
     let simbolo: String
     let cor: Color
     let rotulo: String
     let valor: String
-    var marca: Color?
-    var aoTocarValor: (() -> Void)?
-    @ViewBuilder var controles: Controles
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
                 Image(systemName: simbolo)
-                    .font(fonte(13, .semibold))
+                    .font(fonte(11, .semibold))
                     .foregroundStyle(cor)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 26, height: 26)
                     .background(Circle().fill(cor.opacity(0.15)))
                 Spacer(minLength: 0)
-                if let marca {
-                    Circle()
-                        .fill(marca)
-                        .frame(width: 6, height: 6)
-                        .padding(.top, 5)
-                        .padding(.trailing, 3)
-                }
+                Circle()
+                    .fill(cor)
+                    .frame(width: 5, height: 5)
+                    .padding(.top, 4)
+                    .padding(.trailing, 2)
             }
             Spacer(minLength: 0)
-            HStack(alignment: .bottom, spacing: 4) {
-                if let aoTocarValor {
-                    Button(action: aoTocarValor) { textos }
-                        .buttonStyle(EstiloToque())
-                        .help("Clique para voltar ao tamanho normal")
-                } else {
-                    textos
-                }
-                Spacer(minLength: 0)
-                controles
+            VStack(alignment: .leading, spacing: 0) {
+                Text(rotulo)
+                    .font(fonte(11, .medium))
+                    .foregroundStyle(Paleta.texto2)
+                Text(valor)
+                    .font(fonte(15, .bold))
+                    .foregroundStyle(Paleta.texto)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity)
-        .frame(height: 94)
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Paleta.cartao))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Paleta.borda))
-        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-    }
-
-    private var textos: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(rotulo)
-                .font(fonte(12, .medium))
-                .foregroundStyle(Paleta.texto2)
-            Text(valor)
-                .font(fonte(17, .bold))
-                .foregroundStyle(Paleta.texto)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .contentShape(Rectangle())
+        .frame(height: 76)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Paleta.cartao))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Paleta.borda))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -745,8 +709,8 @@ struct Giro: View {
     var body: some View {
         Circle()
             .trim(from: 0.12, to: 0.85)
-            .stroke(Paleta.texto2, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
-            .frame(width: 11, height: 11)
+            .stroke(Paleta.texto2, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            .frame(width: 10, height: 10)
             .rotationEffect(.degrees(girando ? 360 : 0))
             .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: girando)
             .onAppear { girando = true }
@@ -771,7 +735,7 @@ struct PainelAjustes: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Text("Ajustes")
-                        .font(fonte(21, .bold))
+                        .font(fonte(18, .bold))
                         .foregroundStyle(Paleta.texto)
                     Spacer()
                     Button {
@@ -787,10 +751,10 @@ struct PainelAjustes: View {
                     .help("Fechar")
                     .accessibilityLabel("Fechar ajustes")
                 }
-                .padding(.bottom, 16)
+                .padding(.bottom, 12)
 
                 Text("Endereço IP da TV")
-                    .font(fonte(12, .medium))
+                    .font(fonte(11, .medium))
                     .foregroundStyle(Paleta.texto2)
                     .padding(.bottom, 7)
 
@@ -805,15 +769,15 @@ struct PainelAjustes: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .font(fonte(16, .medium))
-                .padding(.horizontal, 14)
-                .frame(height: 46)
+                .font(fonte(14, .medium))
+                .padding(.horizontal, 12)
+                .frame(height: 38)
                 .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(Paleta.cartao))
                 .overlay(
                     RoundedRectangle(cornerRadius: 15, style: .continuous)
                         .strokeBorder(erro ? Paleta.vermelho.opacity(0.7) : Color.white.opacity(0.1))
                 )
-                .padding(.bottom, 14)
+                .padding(.bottom, 12)
 
                 linhaArquivo("Chave do Overscan BR", ok: modelo.chaveEncontrada, feminino: true)
                     .padding(.bottom, 6)
@@ -830,43 +794,43 @@ struct PainelAjustes: View {
                         .foregroundStyle(Paleta.texto2)
                         .padding(.top, 1)
                     Text("Se o ícone não aparecer na barra de menus, ela pode estar cheia: segure Command e arraste ícones para liberar espaço, ou veja Ajustes do Sistema > Barra de Menus.")
-                        .font(fonte(12, .medium))
+                        .font(fonte(11, .medium))
                         .foregroundStyle(Paleta.texto2)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Paleta.cartao))
-                .padding(.bottom, 18)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Paleta.cartao))
+                .padding(.bottom, 14)
 
                 HStack(spacing: 10) {
                     Button {
                         NSApplication.shared.terminate(nil)
                     } label: {
                         Text("Encerrar app")
-                            .font(fonte(14, .semibold))
+                            .font(fonte(13, .semibold))
                             .foregroundStyle(Paleta.vermelho)
-                            .padding(.horizontal, 16)
-                            .frame(height: 40)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
                             .background(Capsule().fill(Paleta.botao))
                     }
                     .buttonStyle(EstiloToque())
                     Spacer()
                     Button(action: salvar) {
                         Text("Salvar")
-                            .font(fonte(14, .bold))
+                            .font(fonte(13, .bold))
                             .foregroundStyle(Paleta.fundo)
-                            .padding(.horizontal, 22)
-                            .frame(height: 40)
+                            .padding(.horizontal, 20)
+                            .frame(height: 34)
                             .background(Capsule().fill(Paleta.texto))
                     }
                     .buttonStyle(EstiloToque())
                     .keyboardShortcut(.defaultAction)
                 }
             }
-            .padding(20)
-            .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Color(hex: 0x15161A)))
-            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Color.white.opacity(0.08)))
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(hex: 0x15161A)))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color.white.opacity(0.08)))
             .shadow(color: .black.opacity(0.5), radius: 24, y: 10)
             .padding(10)
         }
@@ -883,7 +847,7 @@ struct PainelAjustes: View {
             Text((ok ? "" : "não ") + (feminino ? "encontrada" : "encontrado"))
                 .foregroundStyle(Paleta.texto2)
         }
-        .font(fonte(13, .medium))
+        .font(fonte(12, .medium))
     }
 
     private func salvar() {
@@ -1000,5 +964,29 @@ final class VistaArrasto: NSView {
 
     override func mouseDown(with evento: NSEvent) {
         window?.performDrag(with: evento)
+    }
+}
+
+/// Menu pequeno de opcoes extras, aberto onde o mouse esta.
+@MainActor
+final class MenuRapido: NSObject {
+    static let compartilhado = MenuRapido()
+    private var acoes: [() -> Void] = []
+
+    func mostrar(_ itens: [(String, () -> Void)]) {
+        let menu = NSMenu()
+        acoes = itens.map { $0.1 }
+        for (indice, item) in itens.enumerated() {
+            let linha = NSMenuItem(title: item.0, action: #selector(escolher(_:)), keyEquivalent: "")
+            linha.target = self
+            linha.tag = indice
+            menu.addItem(linha)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func escolher(_ linha: NSMenuItem) {
+        guard acoes.indices.contains(linha.tag) else { return }
+        acoes[linha.tag]()
     }
 }

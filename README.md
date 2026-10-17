@@ -1,3 +1,7 @@
+> **Overscan BR:** esta é a versão brasileira do Overscan para TVs Samsung de 2025 (Tizen 9): tudo em português, letras maiores, barra de favoritos, letra maior e menor por site e vídeo em tela cheia. **Leia o [LEIA-ME-BR.md](LEIA-ME-BR.md).**
+>
+> *English:* a Brazilian Portuguese edition of Overscan for 2025 Samsung TVs (Tizen 9), with larger text, a favourites bar, per-site zoom and a clean video fullscreen. Everything below is the original Overscan README by Patrick Stel ([Apps2Samsung/Overscan](https://github.com/Apps2Samsung/Overscan)), MIT licensed.
+
 <img src="docs/img/overscan.png" alt="" width="104" align="right">
 
 # Overscan

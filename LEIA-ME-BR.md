@@ -1,24 +1,55 @@
 # Overscan BR
 
-Versão brasileira do [Overscan](https://github.com/Apps2Samsung/Overscan), o navegador de código aberto para TVs Samsung com Tizen, de Patrick Stel (licença MIT). Feita para TVs de 2025 (Tizen 9.0), pacote `OverscanNui`.
+Navegador para TVs Samsung de 2025 (Tizen 9), em português e pensado para usar do sofá. É uma versão do [Overscan](https://github.com/Apps2Samsung/Overscan), navegador de código aberto de Patrick Stel, com licença MIT.
 
-Instala ao lado do original: o app se chama **Overscan BR** (`org.bnoads.overscanbr`).
+Instala ao lado de qualquer outro app: aparece na TV como **Overscan BR**.
 
-## O que muda em relação ao original
+## O que ele tem
 
-- **Tudo em português:** menu, avisos, teclado, tela inicial e cartão do controle.
-- **Letras cerca de um terço maiores** em todo o navegador (`NuiTheme.TextScale`).
-- **Menu curto:** o que se usa todo dia fica no primeiro menu; o resto foi para **Avançado…**.
-- **Barra de favoritos** no botão **vermelho** (ou no menu): quadros grandes no topo, setas escolhem, OK abre, o último quadro guarda a página aberta.
-- **Zoom por site:** **verde** aumenta e **amarelo** diminui a letra; o navegador lembra o tamanho de cada site. Mudando na tela inicial, vira o padrão de todos os sites. O zoom só é aplicado entre carregamentos, nunca dentro dos avisos do motor (aplicar ali travava a TV).
-- **Vídeo em tela cheia** no botão **azul**: esconde tudo da página que não é o vídeo (topo e barra lateral fixos incluídos). Depois de 3 segundos sem mexer, o ponteiro some, os controles do vídeo da página também, e em players de outros sites o mouse sai de cima da barra de controles. A primeira seta ou OK só traz o ponteiro de volta. Azul ou Voltar saem.
-- **Botão Info não liga/desliga mais as imagens** (era fácil apertar sem querer, e imagens desligadas quebram players de vídeo). Imagens ficam em Avançado.
-- **Abrir site pelo computador:** `GET http://<IP-da-TV>:8081/abrir?chave=...&url=...`, aceito só da rede de casa e com a chave. O script `tools/overscan-br/tv.py` faz isso (`python3 tv.py site ge.globo.com`).
-- **Favoritos iniciais:** ge e Google, só na primeira abertura.
+- **Tudo em português**, com letras cerca de um terço maiores no menu, nos avisos, no teclado e na tela inicial.
+- **Menu curto:** segure OK. O que se usa todo dia fica na frente; o resto está em **Avançado…**.
+- **Barra de favoritos no botão vermelho:** quadros grandes no topo da tela. Setas escolhem, OK abre, e o último quadro guarda a página que está aberta. Já vem com ge e Google.
+- **Letra maior e menor por site:** **verde** aumenta, **amarelo** diminui. O navegador lembra o tamanho de cada site. Mudando na tela inicial, vira o padrão de todos.
+- **Vídeo em tela cheia no botão azul:** some tudo da página que não é o vídeo (cabeçalho e barra lateral fixos incluídos). Depois de 3 segundos sem mexer, o ponteiro some e os controles do vídeo também. A primeira seta ou OK só traz o ponteiro de volta. Azul ou Voltar saem da tela cheia.
+- **Controle pelo computador:** abra um site ou acione favoritos, letra, tela cheia e menu a partir do computador, na mesma rede de casa (veja abaixo).
+- Bloqueio de anúncios ligado, como no original.
+
+Se o controle não tiver os botões coloridos, tudo isso também está no menu (segurar OK).
+
+## Como instalar
+
+Você precisa de um computador na mesma rede da TV e do [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) (gratuito, Windows, Mac e Linux).
+
+1. Na TV, abra **Apps**, digite **1 2 3 4 5** no controle (no controle sem números, use o botão **123**), ligue o **Developer Mode**, coloque o IP do computador e reinicie a TV.
+2. No Apps2Samsung, escolha **Overscan BR** na lista (ou baixe o `OverscanBR-tizen9.tpk` na página de versões deste repositório e escolha **Custom WGT / TPK**).
+3. Clique em **Baixar & Instalar**. Na primeira vez ele pede para entrar na sua conta Samsung, para criar o certificado.
+
+## Controle pelo computador
+
+Na TV, segure OK e vá em **Avançado… > Controle pelo computador**. Aparecem o **IP da TV** e uma **chave** que só existe na sua TV.
+
+Com o Python 3 (já vem no Mac), use o `tools/overscan-br/tv.py` deste repositório. Na mesma pasta dele, crie dois arquivos de uma linha: `tv_ip.txt` com o IP e `tv_chave.txt` com a chave. Depois:
+
+```bash
+python3 tv.py site ge.globo.com
+```
+
+Por baixo, o Overscan BR responde na porta 8081:
+
+- `GET /abrir?chave=CHAVE&url=ENDERECO` abre um site;
+- `GET /acao?chave=CHAVE&id=ACAO` aciona `favbar`, `zoomin`, `zoomout`, `zoomreset`, `videofull`, `home`, `address`, `bookmark` ou `menu`.
+
+Só aceita pedidos da rede de casa (endereços privados) e com a chave certa.
+
+## Limitações conhecidas
+
+- **Vídeo depende do site.** Isso vem do motor de navegador que a Samsung entrega para apps nas TVs 2025, e acontece igual no Overscan original. Arquivos MP4 simples dão erro de decodificação, e algumas transmissões são recusadas por falta de espaço no buffer da TV. Para vídeo, os apps oficiais e o navegador da própria Samsung são mais garantidos.
+- Overscan e Overscan BR usam a mesma porta (8081): deixe só um aberto.
+- Feito e testado numa TV Samsung de 2025 (QN55QEF1, Tizen 9.0). Os pacotes para TVs mais antigas do Overscan original não foram alterados.
 
 ## Compilar
 
-Precisa do .NET 6 SDK com o workload Tizen (o mesmo do projeto original):
+Precisa do .NET 6 SDK com o workload Tizen, o mesmo do projeto original:
 
 ```bash
 bash dotnet-install.sh --channel 6.0 --install-dir ~/.dotnet6 --no-path
@@ -26,17 +57,8 @@ bash workload-install.sh -d ~/.dotnet6
 DOTNET_ROOT=~/.dotnet6 ~/.dotnet6/dotnet build OverscanNui/OverscanNui.csproj -c Release
 ```
 
-O pacote sai em `OverscanNui/bin/Release/net6.0-tizen8.0/org.bnoads.overscanbr-<versão>.tpk`, assinado com o certificado padrão.
+O pacote sai em `OverscanNui/bin/Release/net6.0-tizen8.0/org.bnoads.overscanbr-<versão>.tpk`, assinado com o certificado padrão. O Apps2Samsung reassina com o seu na instalação.
 
-## Instalar na TV
+## Créditos e licença
 
-Com o [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung): Modo Desenvolvedor da TV ligado com o IP do computador, Release **"Custom WGT / TPK"** (último item da lista), botão da pastinha para escolher o `.tpk`, **Baixar & Instalar**. Ele assina com o certificado da sua conta Samsung. Atenção: ele apaga o arquivo escolhido depois de instalar.
-
-## Limitações conhecidas
-
-- **Vídeo:** herdado do original. Nas TVs 2025, vídeo comum (MP4) dá erro de decodificação dentro do navegador, e algumas transmissões são recusadas por falta de espaço do buffer da TV. Para vídeo, os apps oficiais ou o navegador da Samsung são mais confiáveis.
-- O Overscan original e o Overscan BR usam a mesma porta de diagnóstico (8081); deixe só um aberto.
-
-## Créditos
-
-Overscan: Patrick Stel e colaboradores, licença MIT (arquivo `LICENSE`). As mudanças desta versão seguem a mesma licença.
+Overscan: Patrick Stel e colaboradores ([Apps2Samsung/Overscan](https://github.com/Apps2Samsung/Overscan)), licença MIT, veja `LICENSE`. As mudanças do Overscan BR são da BNOads e seguem a mesma licença.

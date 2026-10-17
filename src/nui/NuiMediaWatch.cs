@@ -128,6 +128,16 @@ namespace Overscan
                 return;
             }
 
+            // Overscan BR: each autoplay probe the guard answered instead of the
+            // decoder. On the trail, because the decoder's abort leaves only the
+            // trail behind, and "answered" right before a death would say the
+            // guard was not enough.
+            if (text.StartsWith(NuiEmptySoundGuard.Prefix, StringComparison.Ordinal))
+            {
+                Breadcrumbs.DropToTrail("guard: " + Trim(text.Substring(NuiEmptySoundGuard.Prefix.Length)));
+                return;
+            }
+
             // The hold's (issue #100's fix): what it kept back and when it let go.
             if (text.StartsWith(NuiMseHold.Prefix, StringComparison.Ordinal))
             {

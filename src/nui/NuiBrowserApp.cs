@@ -86,10 +86,11 @@ namespace Overscan
         /// A zoom chosen but not yet handed to the engine. Set from the load
         /// callbacks and the zoom keys, carried out by <see cref="OnTick"/> once
         /// no load is running. Never from inside a PageLoadStarted or
-        /// PageLoadFinished notification: the first build did exactly that, and
-        /// the TV froze on every launch once a zoom other than 100% was stored,
-        /// the same re-entry ApplyVideoPath and ApplySiteRules already keep away
-        /// from.
+        /// PageLoadFinished notification: that is the re-entry ApplyVideoPath and
+        /// ApplySiteRules already keep away from. The first build did set it from
+        /// there; it was suspected when that build froze on a video page, and the
+        /// trail later showed the TV's media stack aborting instead, so this is a
+        /// precaution rather than a proven fix.
         /// </summary>
         private bool _zoomPending;
         private static readonly int[] ZoomSteps = { 80, 90, 100, 110, 125, 150, 175, 200, 250 };
@@ -898,6 +899,18 @@ namespace Overscan
                 {
                     DiagLog.Add("mse hold failed: " + ex.Message);
                 }
+            }
+
+            // Overscan BR: outermost, so a page's empty-sound autoplay probe is
+            // answered before the probes, the hold or the engine see it. Always on:
+            // it only ever stops the engine decoding nothing. See NuiEmptySoundGuard.
+            try
+            {
+                _web.EvaluateJavaScript(NuiEmptySoundGuard.Script());
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("empty sound guard failed: " + ex.Message);
             }
         }
 
@@ -3534,8 +3547,9 @@ namespace Overscan
         /// the video stays the size of its column. Pressing again removes the
         /// sheet and every mark, so the page is exactly as it was. The first version also asked for the real Fullscreen
         /// API, which on this TV hands the video to the engine's own fullscreen
-        /// path: the part of the media stack that aborted the process on
-        /// 2026-10-17. The NUI view keeps the engine's fullscreen signals
+        /// path, the media stack that aborted the process during video playback
+        /// on 2026-10-17. Not proven to be this call; staying out of that path
+        /// is the precaution. The NUI view keeps the engine's fullscreen signals
         /// internal at API 9 (see <see cref="WatchTheEngine"/>), so that path
         /// was never one this app could follow or undo anyway. The view already fills the screen, so a video filling the
         /// view is a fullscreen video. A player inside another site's frame is

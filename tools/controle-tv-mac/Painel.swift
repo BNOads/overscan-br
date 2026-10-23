@@ -61,28 +61,28 @@ struct Painel: View {
     @State private var endereco = ""
     @FocusState private var campoFocado: Bool
 
-    static let largura: CGFloat = 340
-    static let raio: CGFloat = 22
+    static let largura: CGFloat = 292
+    static let raio: CGFloat = 18
 
     var body: some View {
         VStack(spacing: 0) {
             cabecalho
-                .padding(.bottom, 14)
-            linhaNavegador
-                .padding(.bottom, 10)
-            campoEndereco
-                .padding(.bottom, 14)
-            controle
-                .padding(.bottom, 12)
-            blocos
                 .padding(.bottom, 8)
+            linhaNavegador
+                .padding(.bottom, 6)
+            campoEndereco
+                .padding(.bottom, 8)
+            controle
+                .padding(.bottom, 6)
+            blocos
+                .padding(.bottom, 6)
             volume
-                .padding(.bottom, 10)
+                .padding(.bottom, 6)
             rodape
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 12)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
         .frame(width: Self.largura)
         .background {
             ZStack {
@@ -145,12 +145,12 @@ struct Painel: View {
                 }
                 .font(fonte(11, .semibold))
                 .foregroundStyle(Paleta.texto2)
-                .padding(.bottom, 4)
+                .padding(.bottom, 1)
 
                 Text("TV da Sala")
                     .font(fonte(23, .bold))
                     .foregroundStyle(Paleta.texto)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, 1)
 
                 HStack(spacing: 6) {
                     Circle()
@@ -174,7 +174,7 @@ struct Painel: View {
                 Image(systemName: "power")
                     .font(fonte(16, .semibold))
                     .foregroundStyle(Paleta.texto)
-                    .frame(width: 42, height: 42)
+                    .frame(width: 34, height: 34)
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.17), lineWidth: 1.5))
                     .contentShape(Circle())
             }
@@ -204,11 +204,11 @@ struct Painel: View {
     }
 
     private var linhaNavegador: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 7) {
             Image(systemName: "globe")
                 .font(fonte(14, .semibold))
                 .foregroundStyle(navegadorAberto ? Paleta.azul : Paleta.texto2)
-                .frame(width: 34, height: 34)
+                .frame(width: 28, height: 28)
                 .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Paleta.cartao))
                 .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Paleta.borda))
             VStack(alignment: .leading, spacing: 0) {
@@ -292,7 +292,7 @@ struct Painel: View {
 
     private var campoEndereco: some View {
         let temTexto = !endereco.trimmingCharacters(in: .whitespaces).isEmpty && modelo.progressoSite == nil
-        return HStack(spacing: 9) {
+        return HStack(spacing: 7) {
             if modelo.progressoSite != nil {
                 Giro()
                     .frame(width: 13)
@@ -326,7 +326,7 @@ struct Painel: View {
                 Image(systemName: "arrow.up.right")
                     .font(fonte(11, .bold))
                     .foregroundStyle(temTexto ? Paleta.fundo : Paleta.texto3)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 24, height: 24)
                     .background(Circle().fill(temTexto ? Paleta.texto : Paleta.botao))
             }
             .buttonStyle(EstiloToque(escala: 0.9))
@@ -334,12 +334,12 @@ struct Painel: View {
             .help("Abrir na TV")
             .accessibilityLabel("Abrir na TV")
         }
-        .padding(.leading, 13)
-        .padding(.trailing, 6)
-        .frame(height: 40)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Paleta.cartao))
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
+        .frame(height: 32)
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Paleta.cartao))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(campoFocado ? Color.white.opacity(0.2) : Paleta.borda, lineWidth: 1)
         )
         .animation(.easeOut(duration: 0.15), value: campoFocado)
@@ -359,9 +359,9 @@ struct Painel: View {
     // MARK: Direcional
 
     private var controle: some View {
-        HStack(spacing: 12) {
-            Direcional(modelo: modelo, diametro: 144)
-            VStack(spacing: 9) {
+        HStack(spacing: 8) {
+            Direcional(modelo: modelo, diametro: 118)
+            VStack(spacing: 5) {
                 BotaoLateral(titulo: "Voltar", simbolo: "arrow.uturn.backward") {
                     modelo.tecla("KEY_RETURN")
                 }
@@ -378,7 +378,7 @@ struct Painel: View {
     // MARK: Blocos
 
     private var blocos: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Button {
                 modelo.acao("favbar")
             } label: {
@@ -401,11 +401,11 @@ struct Painel: View {
     // MARK: Volume
 
     private var volume: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 7) {
             Image(systemName: "speaker.wave.2.fill")
                 .font(fonte(11, .semibold))
                 .foregroundStyle(Paleta.texto)
-                .frame(width: 26, height: 26)
+                .frame(width: 22, height: 22)
                 .background(Circle().fill(Color.white.opacity(0.09)))
             VStack(alignment: .leading, spacing: 0) {
                 Text("Som")
@@ -416,21 +416,21 @@ struct Painel: View {
                     .foregroundStyle(Paleta.texto)
             }
             Spacer(minLength: 0)
-            BotaoRedondo(simbolo: "minus", tamanho: 32, dica: "Baixar o volume") {
+            BotaoRedondo(simbolo: "minus", tamanho: 26, dica: "Baixar o volume") {
                 modelo.tecla("KEY_VOLDOWN")
             }
-            BotaoRedondo(simbolo: "speaker.slash.fill", tamanho: 32, dica: "Mudo") {
+            BotaoRedondo(simbolo: "speaker.slash.fill", tamanho: 26, dica: "Mudo") {
                 modelo.tecla("KEY_MUTE")
             }
-            BotaoRedondo(simbolo: "plus", tamanho: 32, dica: "Aumentar o volume") {
+            BotaoRedondo(simbolo: "plus", tamanho: 26, dica: "Aumentar o volume") {
                 modelo.tecla("KEY_VOLUP")
             }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 10)
-        .frame(height: 50)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Paleta.cartao))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Paleta.borda))
+        .padding(.leading, 8)
+        .padding(.trailing, 7)
+        .frame(height: 40)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Paleta.cartao))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Paleta.borda))
     }
 
     // MARK: Rodape
@@ -465,7 +465,7 @@ struct Painel: View {
                     Image(systemName: "xmark")
                         .font(fonte(9, .bold))
                         .foregroundStyle(Paleta.texto2)
-                        .frame(width: 26, height: 26)
+                        .frame(width: 22, height: 22)
                         .background(Circle().fill(Paleta.cartao))
                         .overlay(Circle().strokeBorder(Paleta.borda))
                 }
@@ -479,7 +479,7 @@ struct Painel: View {
                 Image(systemName: "gearshape.fill")
                     .font(fonte(12, .medium))
                     .foregroundStyle(Paleta.texto2)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 22, height: 22)
                     .background(Circle().fill(Paleta.cartao))
                     .overlay(Circle().strokeBorder(Paleta.borda))
             }
@@ -487,7 +487,7 @@ struct Painel: View {
             .help("Ajustes")
             .accessibilityLabel("Ajustes")
         }
-        .frame(height: 28)
+        .frame(height: 24)
         .animation(.easeOut(duration: 0.2), value: modelo.aviso)
         .animation(.easeOut(duration: 0.25), value: modelo.ligacao)
     }
@@ -597,7 +597,7 @@ struct EstiloSeta: ButtonStyle {
         Image(systemName: simbolo)
             .font(fonte(13, .bold))
             .foregroundStyle(ativo ? Paleta.texto : Paleta.texto2)
-            .frame(width: 38, height: 38)
+            .frame(width: 32, height: 32)
             .background(Circle().fill(Color.white.opacity(ativo ? 0.09 : 0)))
             .contentShape(Circle())
             .scaleEffect(configuration.isPressed ? 0.92 : 1)
@@ -612,23 +612,23 @@ struct BotaoLateral: View {
 
     var body: some View {
         Button(action: acao) {
-            HStack(spacing: 9) {
+            HStack(spacing: 6) {
                 Image(systemName: simbolo)
                     .font(fonte(11, .semibold))
                     .foregroundStyle(Paleta.texto)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 22, height: 22)
                     .background(Circle().fill(Paleta.botao))
                 Text(titulo)
                     .font(fonte(13, .semibold))
                     .foregroundStyle(Paleta.texto)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 6)
             .frame(maxWidth: .infinity)
-            .frame(height: 42)
-            .background(RoundedRectangle(cornerRadius: 21, style: .continuous).fill(Paleta.cartao))
-            .overlay(RoundedRectangle(cornerRadius: 21, style: .continuous).strokeBorder(Paleta.borda))
-            .contentShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+            .frame(height: 36)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Paleta.cartao))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Paleta.borda))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(EstiloToque())
         .accessibilityLabel(titulo)
@@ -672,7 +672,7 @@ struct Bloco: View {
                 Image(systemName: simbolo)
                     .font(fonte(11, .semibold))
                     .foregroundStyle(cor)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 22, height: 22)
                     .background(Circle().fill(cor.opacity(0.15)))
                 Spacer(minLength: 0)
                 Circle()
@@ -693,12 +693,12 @@ struct Bloco: View {
                     .minimumScaleFactor(0.8)
             }
         }
-        .padding(12)
+        .padding(8)
         .frame(maxWidth: .infinity)
-        .frame(height: 76)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Paleta.cartao))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Paleta.borda))
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(height: 62)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Paleta.cartao))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Paleta.borda))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

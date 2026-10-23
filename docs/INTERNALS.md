@@ -4435,6 +4435,36 @@ What no report from him can settle is whether an ad that the player expected and
 a second of silence for counts against his account in some way. uBlock has shipped
 this for years without a report of it; that is the evidence there is.
 
+## Overscan BR 1.2.0: no new windows, a smaller cache, a tighter card
+
+**New windows were already refused, and now that is said out loud.** Measured on
+the QEF1 (Tizen 9.0) with 1.1.1 and a page served from a Mac: `window.open` on load
+returned `null`, `window.open` from a click returned `null` every time, and a
+`target=_blank` link fetched nothing. The page stayed on its own address. The
+clicks were the injected pointer's, so `isTrusted=false`; a trusted click through
+the inspector path was not measured. With nobody answering `NewWindowCreated` the
+engine has no view to put a window in. 1.2.0 sets
+`WebSettings.ScriptsOpenWindowsAllowed = false` and refuses every
+`NewWindowPolicyDecided` with `Ignore()`, so an engine that later starts creating
+windows on its own does not bring them back. The event and
+`WebViewPolicyDecidedEventArgs.PolicyDecisionMaker` exist in the 9.0 toolkit and
+not in the 8.0 reference this package compiles against, so both are reached by
+reflection; a set without them keeps the engine's own refusal. The report's
+`new window:` line counts the refusals and names the last address. What people
+call a popup on the streaming sites is usually drawn inside the page or the
+player's frame, which none of this touches.
+
+**Memory.** 1.1.1 sat at 126 MB resident, peak 141 MB, on a live stream. 1.2.0
+sets the engine's cache model to `DocumentBrowser` instead of leaving the default,
+and calls `WebContext.FreeUnusedMemory()` five seconds after each page finishes
+and when the platform reports low memory. Both from `OnTick`, never from a load
+event. The `memory :` line now says the cache model and how many frees went
+through. Not yet measured on the set: whether the resident size actually drops.
+
+**The remote card** keeps its point sizes and is sized from its labels'
+`NaturalSize2D` instead of fixed columns (fallback to fixed sizes if the toolkit
+answers zero). Not yet seen on the set.
+
 ## Emulator notes
 
 - **The TV emulator needs a modern `-cpu` model or it panics.** With the default

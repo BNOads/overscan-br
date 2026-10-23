@@ -274,6 +274,17 @@ namespace Overscan
         private bool _adBlockOn = true;
         private bool _oneVideoOn = true;
 
+        // New windows refused, and the last address one asked for. Written on the
+        // engine's callback thread, read by the report.
+        private int _windowsRefused;
+        private volatile string _lastWindowRefused = "(none yet)";
+
+        // Overscan BR: when the engine is next asked to hand back the memory it is
+        // holding and no longer using, and how that has gone.
+        private DateTime _freeMemoryAt = DateTime.MinValue;
+        private int _memoryFrees;
+        private string _memoryState = "(not set)";
+
         /// <summary>
         /// The browser-wide answers, i.e. what a site with no rule of its own
         /// gets. <see cref="_imagesOn"/> and <see cref="_presetIndex"/> are what
@@ -559,6 +570,7 @@ namespace Overscan
                     // its own but keeps it internal; this is the app-framework one,
                     // inherited from CoreApplication, and it is public.
                     Breadcrumbs.DropToTrail("PLATFORM SAYS MEMORY IS LOW: " + e.LowMemoryStatus);
+                    _freeMemoryAt = DateTime.UtcNow;
                 };
             }
             catch (Exception ex)
@@ -643,10 +655,23 @@ namespace Overscan
                     // die with the process — which is what a site logging you out
                     // every launch (issue #20) looks like from the sofa.
                     _web.Settings.PrivateBrowsingEnabled = false;
+
+                    // Overscan BR: no page opens a window. This browser has one view
+                    // and no tabs, so a new window is never something the person on
+                    // the sofa asked for; on the sites it is used on it is an ad.
+                    // The engine refuses already when nobody answers NewWindowCreated
+                    // (measured on the QEF1: window.open returned null, with and
+                    // without a click, and a target=_blank link went nowhere). This
+                    // says it twice, so an engine update that starts making windows
+                    // on its own does not bring them back.
+                    _web.Settings.ScriptsOpenWindowsAllowed = false;
                 }
+
+                RefuseNewWindows();
 
                 ConfigureCookies();
                 ConfigureProxy();
+                ConfigureMemory();
 
                 // Before the first load, so the start screen's tiles are the first
                 // requests it sees. Default on: a feature that is off by default is
@@ -735,6 +760,10 @@ namespace Overscan
                     _pageEverLoaded = true;
                     _progress.Hide();
                     Breadcrumbs.Drop("load finished: " + SafeUrl() + "  [" + ProcessMemory.Summary() + "]");
+
+                    // Only a time here: the engine is not touched from inside its
+                    // own load events. OnTick makes the call once the page settles.
+                    _freeMemoryAt = DateTime.UtcNow.AddSeconds(FreeMemoryDelaySeconds);
                     _cursor.Reinstall();
                     InstallMediaWatch();
                     Probe();
@@ -1129,6 +1158,8 @@ namespace Overscan
         /// </summary>
         private bool OnTick()
         {
+            FreeUnusedMemoryWhenSettled();
+
             if (_loading && _chromeVisible)
             {
                 int width = _window.WindowSize.Width;
@@ -1570,66 +1601,110 @@ namespace Overscan
         private void BuildHints()
         {
             Size2D screen = _window.WindowSize;
-            int width = NuiTheme.Px(620);
-            int rowHeight = NuiTheme.Px(42);
-            int keyWidth = NuiTheme.Px(170);
-            int header = NuiTheme.Px(52);
 
-            // Title, one row per key, then a row's worth of clearance for the
-            // unrecognised-button line that sits on the bottom edge. Derived rather
-            // than a constant, because a card that grows by a key and not by a row
-            // draws the last key on top of that line.
-            int height = NuiTheme.Pad + header + ((RemoteRows.Length + 1) * rowHeight) + NuiTheme.Pad;
+            // Overscan BR: the card is sized to its own text rather than to fixed
+            // columns. The text stays at the size it was asked for from the sofa;
+            // what was spare is the space around it, and that is what a card in the
+            // corner of a page being watched should give back. Measured on the set
+            // because the engine's points-to-pixels is the set's, not ours, and a
+            // TextLabel clips what does not fit. The fixed sizes are the fallback
+            // for a toolkit that answers a natural size of zero.
+            int pad = NuiTheme.Px(12);
+            int gap = NuiTheme.Px(14);
+            int rowGap = NuiTheme.Px(4);
+            string[][] rows = RemoteRows;
+
+            var title = new TextLabel
+            {
+                PointSize = NuiTheme.Pt(12),
+                TextColor = NuiTheme.Accent,
+                Text = "CONTROLE",
+            };
+
+            var keys = new TextLabel[rows.Length];
+            var labels = new TextLabel[rows.Length];
+            int keyWidth = 0;
+            int labelWidth = 0;
+            int rowHeight = 0;
+            for (int i = 0; i < rows.Length; i++)
+            {
+                keys[i] = new TextLabel
+                {
+                    PointSize = NuiTheme.Pt(12),
+                    TextColor = NuiTheme.Ink,
+                    Text = rows[i][0],
+                };
+                labels[i] = new TextLabel
+                {
+                    PointSize = NuiTheme.Pt(11),
+                    TextColor = NuiTheme.InkMuted,
+                    Text = rows[i][1],
+                };
+                Size2D k = NaturalOr(keys[i], 0, 0);
+                Size2D l = NaturalOr(labels[i], 0, 0);
+                keyWidth = Math.Max(keyWidth, k.Width);
+                labelWidth = Math.Max(labelWidth, l.Width);
+                rowHeight = Math.Max(rowHeight, Math.Max(k.Height, l.Height));
+            }
+
+            if (keyWidth <= 0 || labelWidth <= 0 || rowHeight <= 0)
+            {
+                keyWidth = NuiTheme.Px(150);
+                labelWidth = NuiTheme.Px(300);
+                rowHeight = NuiTheme.Px(30);
+            }
+
+            // A little slack on the measured widths: the natural size is the
+            // shaped run, and a label exactly that wide can still lose its last
+            // glyph to rounding.
+            keyWidth += NuiTheme.Px(4);
+            labelWidth += NuiTheme.Px(4);
+            rowHeight += rowGap;
+
+            int titleHeight = Math.Max(NaturalOr(title, 0, NuiTheme.Px(30)).Height, NuiTheme.Px(24));
+            int footerHeight = NuiTheme.Px(24);
+            int width = pad + keyWidth + gap + labelWidth + pad;
+            int top = pad + titleHeight + rowGap;
+
+            // Title, one row per key, then room for the unrecognised-button line
+            // that sits on the bottom edge. Derived rather than a constant, because
+            // a card that grows by a key and not by a row draws the last key on top
+            // of that line.
+            int height = top + (rows.Length * rowHeight) + footerHeight + pad;
 
             _hints = new View
             {
-                Position2D = new Position2D(screen.Width - width - 40, screen.Height - height - 40),
+                Position2D = new Position2D(screen.Width - width - 32, screen.Height - height - 32),
                 Size2D = new Size2D(width, height),
                 BackgroundColor = NuiTheme.PanelDeep,
                 CornerRadius = NuiTheme.Radius,
             };
 
-            var title = new TextLabel
-            {
-                Position2D = new Position2D(NuiTheme.Pad, NuiTheme.Pad),
-                Size2D = new Size2D(width - (NuiTheme.Pad * 2), NuiTheme.Px(34)),
-                PointSize = NuiTheme.Pt(12),
-                TextColor = NuiTheme.Accent,
-                Text = "CONTROLE",
-            };
+            title.Position2D = new Position2D(pad, pad);
+            title.Size2D = new Size2D(width - (pad * 2), titleHeight);
             _hints.Add(title);
-
-            string[][] rows = RemoteRows;
 
             for (int i = 0; i < rows.Length; i++)
             {
-                int y = NuiTheme.Pad + header + (i * rowHeight);
-                _hints.Add(new TextLabel
-                {
-                    Position2D = new Position2D(NuiTheme.Pad, y),
-                    Size2D = new Size2D(keyWidth, rowHeight - 4),
-                    PointSize = NuiTheme.Pt(12),
-                    TextColor = NuiTheme.Ink,
-                    Text = rows[i][0],
-                });
-                _hints.Add(new TextLabel
-                {
-                    Position2D = new Position2D(NuiTheme.Pad + keyWidth, y + 3),
-                    Size2D = new Size2D(width - NuiTheme.Pad - keyWidth - 20, rowHeight - 8),
-                    PointSize = NuiTheme.Pt(11),
-                    TextColor = NuiTheme.InkMuted,
-                    Text = rows[i][1],
-                });
+                int y = top + (i * rowHeight);
+                keys[i].Position2D = new Position2D(pad, y);
+                keys[i].Size2D = new Size2D(keyWidth, rowHeight);
+                labels[i].Position2D = new Position2D(pad + keyWidth + gap, y);
+                labels[i].Size2D = new Size2D(labelWidth, rowHeight);
+                labels[i].VerticalAlignment = VerticalAlignment.Center;
+                keys[i].VerticalAlignment = VerticalAlignment.Center;
+                _hints.Add(keys[i]);
+                _hints.Add(labels[i]);
             }
 
             // Where an unrecognised button reports itself. A remote we have never
             // seen sends a name we do not answer to, and the user cannot open the
-            // diagnostics screen to find out what it was — that screen is behind a
+            // diagnostics screen to find out what it was: that screen is behind a
             // number key too. So the name lands here, on the card they can see.
             _hintsFooter = new TextLabel
             {
-                Position2D = new Position2D(NuiTheme.Pad, height - NuiTheme.Pad - NuiTheme.Px(30)),
-                Size2D = new Size2D(width - (NuiTheme.Pad * 2), NuiTheme.Px(28)),
+                Position2D = new Position2D(pad, height - pad - footerHeight),
+                Size2D = new Size2D(width - (pad * 2), footerHeight),
                 PointSize = NuiTheme.Pt(9),
                 TextColor = NuiTheme.InkMuted,
                 Text = string.Empty,
@@ -1637,6 +1712,140 @@ namespace Overscan
             _hints.Add(_hintsFooter);
 
             _window.Add(_hints);
+        }
+
+        private const int FreeMemoryDelaySeconds = 5;
+
+        /// <summary>
+        /// Overscan BR: the engine's cache sized for a TV rather than a desktop.
+        /// The set has little memory to share with the system, and the browser is
+        /// used for one page at a time; the largest model keeps pages and decoded
+        /// resources around for a back button that is pressed rarely here. The
+        /// middle one still caches, so a site's own files are not fetched twice
+        /// on the same page.
+        /// </summary>
+        private void ConfigureMemory()
+        {
+            try
+            {
+                WebContext context = _web == null ? null : _web.Context;
+                if (context == null)
+                {
+                    _memoryState = "engine offered no context";
+                    return;
+                }
+
+                context.CacheModel = WebContext.CacheModelType.DocumentBrowser;
+                _memoryState = "cache " + context.CacheModel;
+            }
+            catch (Exception ex)
+            {
+                _memoryState = "cache left alone (" + ex.GetType().Name + ")";
+                DiagLog.Add("cache model not set: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Asks the engine to give back what it holds and is not using, a few
+        /// seconds after a page has finished and whenever the platform says memory
+        /// is low. Called from the tick, between loads, never from a load event.
+        /// </summary>
+        private void FreeUnusedMemoryWhenSettled()
+        {
+            if (_freeMemoryAt == DateTime.MinValue || DateTime.UtcNow < _freeMemoryAt || _loading)
+            {
+                return;
+            }
+
+            _freeMemoryAt = DateTime.MinValue;
+            try
+            {
+                WebContext context = _web == null ? null : _web.Context;
+                if (context != null && context.FreeUnusedMemory())
+                {
+                    _memoryFrees++;
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("free unused memory failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Overscan BR: every request for a new window is refused at the engine,
+        /// whatever asked for it: a script, a link with target=_blank, a form. The
+        /// page that asked stays where it is.
+        /// </summary>
+        private void RefuseNewWindows()
+        {
+            try
+            {
+                // Tizen 9's toolkit has the event and the 8.0 reference this package
+                // compiles against does not, so it is found at run time. A set
+                // without it keeps the engine's own refusal and the setting above.
+                System.Reflection.EventInfo policy = typeof(WebView).GetEvent("NewWindowPolicyDecided");
+                if (policy == null)
+                {
+                    Breadcrumbs.Drop("new windows: engine has no policy event");
+                    return;
+                }
+
+                EventHandler<WebViewPolicyDecidedEventArgs> refuse = (s, e) =>
+                {
+                    try
+                    {
+                        // Same story as the event: 9.0 names the maker PolicyDecisionMaker,
+                        // the 8.0 reference only knows the response one.
+                        object maker = e == null ? null
+                            : e.GetType().GetProperty("PolicyDecisionMaker")?.GetValue(e);
+                        WebPolicyDecisionMaker decision = maker as WebPolicyDecisionMaker ?? e?.ResponsePolicyDecisionMaker;
+                        if (decision == null)
+                        {
+                            return;
+                        }
+
+                        string url = decision.Url;
+                        decision.Ignore();
+                        System.Threading.Interlocked.Increment(ref _windowsRefused);
+                        _lastWindowRefused = string.IsNullOrEmpty(url) ? "(no address)" : url;
+                    }
+                    catch (Exception ex)
+                    {
+                        // On the engine's own callback thread: a diagnostic line,
+                        // never an exception.
+                        DiagLog.Add("new window not refused: " + ex.Message);
+                    }
+                };
+                policy.AddEventHandler(_web, refuse);
+                Breadcrumbs.Drop("new windows: refused");
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("new-window guard failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// A label's natural size, or the fallback when the toolkit cannot say.
+        /// Best-effort like everything else that reaches past the managed surface.
+        /// </summary>
+        private static Size2D NaturalOr(TextLabel label, int width, int height)
+        {
+            try
+            {
+                Size2D size = label.NaturalSize2D;
+                if (size != null && size.Width > 0 && size.Height > 0)
+                {
+                    return new Size2D(size.Width, size.Height);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("text size unreadable: " + ex.Message);
+            }
+
+            return new Size2D(width, height);
         }
 
         private void ShowHints(bool visible)
@@ -3893,8 +4102,10 @@ namespace Overscan
                       ? "nothing remembered for this site"
                       : "in force for " + SiteRules.For(_cachedUrl).Site) + "\n" +
                   "ad block  : " + NuiAdBlock.Summary() + "\n" +
+                  "new window: refused " + _windowsRefused + " | last: " + _lastWindowRefused + "\n" +
                   "proxy     : " + ProxyLine() + "\n" +
-                  "memory    : " + ProcessMemory.Summary() + ", peak " + _peakMemoryMb + " MB\n" +
+                  "memory    : " + ProcessMemory.Summary() + ", peak " + _peakMemoryMb + " MB | " + _memoryState +
+                  ", freed " + _memoryFrees + "x\n" +
                   "last words: " + NuiDeathWatch.LastWord + "\n" +
                   "stderr    : " + NativeStdErr.SessionState + "\n" +
                   "url       : " + _cachedUrl;

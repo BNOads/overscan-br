@@ -116,6 +116,7 @@ namespace Overscan
             { "zoomout", RemoteMenu.ActionZoomOut },
             { "zoomreset", RemoteMenu.ActionZoomReset },
             { "videofull", RemoteMenu.ActionVideoFullscreen },
+            { "player", RemoteMenu.ActionOpenPlayer },
             { "home", RemoteMenu.ActionHome },
             { "address", RemoteMenu.ActionAddress },
             { "bookmark", RemoteMenu.ActionBookmark },
@@ -748,7 +749,14 @@ namespace Overscan
                     NuiVideoRect.Reset();
                     NuiMseWatch.Reset();
                     NuiMseHold.Reset();
+                    _earlyInstalls = EarlyInstallsPerLoad;
                 };
+
+                // Overscan BR: the two guards that only help if they are in before
+                // the page asks, sent as soon as the engine reports the new page
+                // and not only on load finished. See InstallEarly.
+                _web.UrlChanged += (s, e) => InstallEarly();
+                _web.PageLoading += (s, e) => InstallEarly();
 
                 _web.PageLoadFinished += (s, e) =>
                 {
@@ -940,6 +948,57 @@ namespace Overscan
             catch (Exception ex)
             {
                 DiagLog.Add("empty sound guard failed: " + ex.Message);
+            }
+
+            // Overscan BR: and the HLS answer, for a page InstallEarly missed.
+            try
+            {
+                _web.EvaluateJavaScript(NuiHlsAnswer.Script());
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("hls answer failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// How many early installs one load gets. The engine raises
+        /// <c>PageLoading</c> more than once per load, both scripts are idempotent,
+        /// and two chances is enough to land one in the new document rather than
+        /// the one it replaced.
+        /// </summary>
+        private const int EarlyInstallsPerLoad = 3;
+
+        private int _earlyInstalls;
+
+        /// <summary>
+        /// Overscan BR: the HLS answer and the empty-sound guard, as early in a page
+        /// as the engine will tell us there is one. Both answer a question a page
+        /// asks while it sets itself up (does native HLS play? may sound start on
+        /// its own?), so on load finished they are often a question too late: the
+        /// player has already chosen the road that ends in error 4. An evaluation
+        /// sent now runs at the next gap in the page's own parsing, which is ahead
+        /// of nearly every player.
+        ///
+        /// Nothing here touches the engine's settings, only the page, which is the
+        /// same kind of call load finished has always made.
+        /// </summary>
+        private void InstallEarly()
+        {
+            if (_earlyInstalls <= 0 || _web == null)
+            {
+                return;
+            }
+
+            _earlyInstalls--;
+            try
+            {
+                _web.EvaluateJavaScript(NuiHlsAnswer.Script());
+                _web.EvaluateJavaScript(NuiEmptySoundGuard.Script());
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("early install failed: " + ex.Message);
             }
         }
 
@@ -1887,6 +1946,7 @@ namespace Overscan
                 new RemoteMenu.Item(RemoteMenu.ActionZoomOut, "Letra menor", "amarelo"),
                 new RemoteMenu.Item(RemoteMenu.ActionZoomReset, "Letra no tamanho normal", string.Empty),
                 new RemoteMenu.Item(RemoteMenu.ActionVideoFullscreen, "Vídeo em tela cheia", "azul"),
+                new RemoteMenu.Item(RemoteMenu.ActionOpenPlayer, "Abrir só o player", string.Empty),
                 new RemoteMenu.Item(RemoteMenu.ActionTypeInField, "Digitar no campo clicado…", "2"),
                 new RemoteMenu.Item(RemoteMenu.ActionAdBlock, "Bloquear anúncios: liga/desliga", string.Empty),
                 new RemoteMenu.Item(RemoteMenu.ActionAdvanced, "Avançado…", string.Empty),
@@ -2113,6 +2173,10 @@ namespace Overscan
 
                 case RemoteMenu.ActionVideoFullscreen:
                     ToggleVideoFullscreen();
+                    break;
+
+                case RemoteMenu.ActionOpenPlayer:
+                    OpenPlayerFrame();
                     break;
 
                 case RemoteMenu.ActionAdvanced:
@@ -3768,6 +3832,72 @@ namespace Overscan
         /// The element is never moved in the DOM: taking a media element out of
         /// the document pauses it, which is the one thing this must not do.
         /// </summary>
+        /// <summary>
+        /// Overscan BR: opens the frame the video is in as the page itself, the
+        /// "open frame" every desktop browser has.
+        ///
+        /// A player embedded from another origin is out of reach of everything
+        /// this browser does to a page: the HLS answer, the empty-sound guard, the
+        /// clean fullscreen and the click beside a button all stop at the frame's
+        /// edge, because no script of ours runs inside it. Opened on its own, the
+        /// same player is the main document and gets all of it.
+        ///
+        /// Which frame: the one under the pointer if it is on one, otherwise the
+        /// largest on screen, and only if it covers a real part of it (a player,
+        /// not a like button). A page whose video is its own is told so, since the
+        /// blue key already does the right thing there.
+        /// </summary>
+        private void OpenPlayerFrame()
+        {
+            if (_web == null || _atHome)
+            {
+                Flash("Abra uma página com vídeo primeiro");
+                return;
+            }
+
+            string script =
+                "(function(fx,fy){var d=document,w=window.innerWidth,h=window.innerHeight;" +
+                "function seen(e){var r=e.getBoundingClientRect();" +
+                "return Math.max(0,Math.min(r.right,w)-Math.max(r.left,0))*Math.max(0,Math.min(r.bottom,h)-Math.max(r.top,0));}" +
+                "function src(f){var s='';try{s=String(f.src||'');}catch(e){}return /^https?:/i.test(s)?s:'';}" +
+                "var hit=null;try{hit=d.elementFromPoint(fx*w,fy*h);}catch(e){}" +
+                "if(hit&&(hit.tagName==='IFRAME'||hit.tagName==='FRAME')&&src(hit)){return 'frame '+src(hit);}" +
+                "var best='',most=w*h*0.06,f=d.querySelectorAll('iframe,frame');" +
+                "for(var i=0;i<f.length;i++){var a=seen(f[i]),s=src(f[i]);if(s&&a>most){most=a;best=s;}}" +
+                "if(best){return 'frame '+best;}" +
+                "var v=d.querySelectorAll('video');for(var j=0;j<v.length;j++){if(seen(v[j])>0){return 'own';}}" +
+                "return 'none';})(" +
+                _cursor.FractionX.ToString("0.#####", CultureInfo.InvariantCulture) + "," +
+                _cursor.FractionY.ToString("0.#####", CultureInfo.InvariantCulture) + ")";
+
+            try
+            {
+                _web.EvaluateJavaScript(script, result =>
+                {
+                    string answer = (result ?? string.Empty).Trim().Trim('"');
+                    Breadcrumbs.Drop("open player: " + (answer.Length > 160 ? answer.Substring(0, 160) : answer));
+
+                    if (answer.StartsWith("frame ", StringComparison.Ordinal))
+                    {
+                        Flash("Abrindo só o player");
+                        Navigate(answer.Substring("frame ".Length));
+                    }
+                    else if (answer == "own")
+                    {
+                        Flash("O vídeo já é desta página: use Vídeo em tela cheia (azul)");
+                    }
+                    else
+                    {
+                        Flash("Não achei um player em quadro nesta página");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("open player failed: " + ex.Message);
+            }
+        }
+
         private void ToggleVideoFullscreen()
         {
             if (_web == null || _atHome)

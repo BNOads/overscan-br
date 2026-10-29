@@ -109,9 +109,10 @@ namespace Overscan
   }
 
   /* x and y default to the cursor, but a click inside a same-origin frame has to
-     report coordinates in *that* frame's space or the page reads them wrongly. */
+     report coordinates in *that* frame's space or the page reads them wrongly.
+     Returns false when the page cancelled the event. */
   function fire(type, target, x, y) {
-    if (!target) { return; }
+    if (!target) { return true; }
     if (x === undefined) { x = st.x; }
     if (y === undefined) { y = st.y; }
     var e;
@@ -124,7 +125,54 @@ namespace Overscan
       e.initMouseEvent(type, true, true, window, type === 'click' ? 1 : 0,
                        0, 0, x, y, false, false, false, false, 0, null);
     }
-    try { target.dispatchEvent(e); } catch (_) {}
+    try { return target.dispatchEvent(e); } catch (_) { return true; }
+  }
+
+  /* Overscan BR: a real mouse reaches a page as a pointer event first and a mouse
+     event second, and a growing share of pages only listen for the first. Menus
+     that open on pointerdown, players whose controls answer pointerup, sliders
+     that track pointermove: to those, mousedown/mouseup/click alone is a pointer
+     that never pressed anything, and from the sofa that is a button that does
+     not work. The pair goes out in the order chromium uses for a real mouse. */
+  var POINTER = { mousedown: 'pointerdown', mouseup: 'pointerup', mousemove: 'pointermove',
+                  mouseover: 'pointerover', mouseout: 'pointerout',
+                  mouseenter: 'pointerenter', mouseleave: 'pointerleave' };
+
+  function firePointer(type, target, x, y) {
+    if (!target || !window.PointerEvent) { return true; }
+    if (x === undefined) { x = st.x; }
+    if (y === undefined) { y = st.y; }
+    var flat = type === 'pointerenter' || type === 'pointerleave';
+    var press = type === 'pointerdown' || type === 'pointerup';
+    var e;
+    try {
+      e = new PointerEvent(type, {
+        bubbles: !flat, cancelable: !flat, composed: true, view: window,
+        clientX: x, clientY: y, button: press ? 0 : -1, buttons: type === 'pointerdown' ? 1 : 0,
+        pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1,
+        pressure: type === 'pointerdown' ? 0.5 : 0
+      });
+    } catch (_) { return true; }
+    try { return target.dispatchEvent(e); } catch (_) { return true; }
+  }
+
+  /* The mouse event and the pointer event in front of it, for everything but the
+     press itself (see press()). */
+  function hover(type, target) {
+    firePointer(POINTER[type], target);
+    fire(type, target);
+  }
+
+  /* One press: pointerdown, mousedown, pointerup, mouseup, click. A page that
+     cancels pointerdown gets no mousedown or mouseup, as with a real mouse, so a
+     widget that handles the press on pointerdown and on mousedown alike is not
+     pressed twice. The click goes out regardless, as it does in chromium. */
+  function press(target, x, y) {
+    var mouse = firePointer('pointerdown', target, x, y);
+    if (mouse) { fire('mousedown', target, x, y); }
+    firePointer('pointerup', target, x, y);
+    if (mouse) { fire('mouseup', target, x, y); }
+    fire('click', target, x, y);
   }
 
   function at() {
@@ -181,6 +229,70 @@ namespace Overscan
       if (n && n.nodeType !== 1) { return null; }
     }
     return null;
+  }
+
+  /* Overscan BR: whether a node *looks* clickable, which is how a sighted user
+     decides. Pages put their click handlers on plain divs and spans all the time
+     (a player's play overlay, a card, a tab strip), none of which the selector
+     above can name, and nearly all of them say so with cursor:pointer. */
+  function looksClickable(node) {
+    for (var n = node, depth = 0; n && n.nodeType === 1 && depth < 6; depth++) {
+      var s;
+      try { s = window.getComputedStyle(n); } catch (_) { s = null; }
+      if (s && s.cursor === 'pointer') { return true; }
+      n = n.parentElement;
+    }
+    return false;
+  }
+
+  /* A video, a canvas or a frame is a surface, not a miss: the page answers
+     clicks on it however it likes, and a press there must stay there. */
+  function isSurface(node) {
+    var tag = node && node.tagName;
+    return tag === 'VIDEO' || tag === 'CANVAS' || tag === 'AUDIO' || isFrame(node);
+  }
+
+  function pressable(node) {
+    if (!node) { return null; }
+    var t = interactive(node);
+    if (t) { return t; }
+    return looksClickable(node) ? node : null;
+  }
+
+  /* Overscan BR: the nearest thing worth pressing, when the pointer is just beside
+     one. The pointer moves 13 px at a time, a page's close button can be 16 px
+     across, and a press that stops a few pixels short of it lands on nothing at
+     all, which from the sofa reads as a button that will not press. So a press on
+     empty page looks a short way around itself, closest ring first, and goes to
+     what it finds there. Never from a surface (see isSurface), and never into a
+     frame: what is inside another origin's frame is not ours to guess at. */
+  var NEAR = [12, 24];
+  var AROUND = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]];
+
+  function nearby(x, y) {
+    for (var r = 0; r < NEAR.length; r++) {
+      for (var d = 0; d < AROUND.length; d++) {
+        var px = clamp(x + AROUND[d][0] * NEAR[r], window.innerWidth - 1);
+        var py = clamp(y + AROUND[d][1] * NEAR[r], window.innerHeight - 1);
+        var el;
+        try { el = document.elementFromPoint(px, py); } catch (_) { el = null; }
+        if (!el || isSurface(el)) { continue; }
+        var t = pressable(el);
+        if (t) { return { el: t, x: px, y: py }; }
+      }
+    }
+    return null;
+  }
+
+  /* What a press here would do, for the pointer to show before it is pressed:
+     'c' presses something, 'n' presses something just beside it (see nearby),
+     'f' goes into another origin's frame, '' does nothing we can see. */
+  function kindAt(hit) {
+    if (!hit) { return ''; }
+    if (isFrame(hit)) { return 'f'; }
+    if (pressable(hit)) { return 'c'; }
+    if (isSurface(hit)) { return ''; }
+    return nearby(st.x, st.y) ? 'n' : '';
   }
 
   function scrollableAncestor(node) {
@@ -269,11 +381,15 @@ namespace Overscan
       place();
       var t = at();
       if (t !== st.over) {
-        if (st.over) { fire('mouseout', st.over); fire('mouseleave', st.over); }
-        if (t) { fire('mouseover', t); fire('mouseenter', t); }
+        if (st.over) { hover('mouseout', st.over); hover('mouseleave', st.over); }
+        if (t) { hover('mouseover', t); hover('mouseenter', t); }
         st.over = t;
       }
-      fire('mousemove', t);
+      hover('mousemove', t);
+
+      /* Overscan BR: what a press would do here, so the app can show it on the
+         pointer before anything is pressed (see kindAt). */
+      return kindAt(t);
     },
 
     click: function () {
@@ -286,6 +402,7 @@ namespace Overscan
          nothing at all would happen (issue #15). */
       var x = st.x;
       var y = st.y;
+      var framed = false;
       if (isFrame(hit)) {
         var inner = descend(hit, st.x, st.y);
         if (!inner) {
@@ -301,17 +418,30 @@ namespace Overscan
         hit = inner.el;
         x = inner.x;
         y = inner.y;
+        framed = true;
       }
 
       /* elementFromPoint returns the topmost node, which on icon buttons is a
          decorative <svg>/<path>/<span> whose parent carries the behaviour.
          Dispatching on that child does nothing, so climb to the real target. */
-      var t = interactive(hit) || hit;
+      var t = interactive(hit);
+
+      /* Overscan BR: a press on empty page goes to the button just beside it, if
+         there is one (see nearby). Only in this document: the ring is hit-tested
+         in this page's coordinates. */
+      var near = null;
+      if (!t && !framed && !isSurface(hit) && !looksClickable(hit)) {
+        near = nearby(x, y);
+        if (near) {
+          t = near.el;
+          x = near.x;
+          y = near.y;
+        }
+      }
+      t = t || hit;
 
       pulse();
-      fire('mousedown', t, x, y);
-      fire('mouseup', t, x, y);
-      fire('click', t, x, y);
+      press(t, x, y);
 
       /* A text field is deliberately NOT focused here — focusing raises the TV's
          IME. It is marked instead: outlined so the user can see where text will
@@ -330,7 +460,7 @@ namespace Overscan
 
       var d = (isField ? 'FIELD:' : '') + (t.tagName || '?');
       if (t.id) { d += '#' + t.id; }
-      if (t !== hit) { d += ' (from ' + (hit.tagName || '?') + ')'; }
+      if (t !== hit) { d += ' (' + (near ? 'near' : 'from') + ' ' + (hit.tagName || '?') + ')'; }
       if (t.href) { d += ' -> ' + t.href; }
       return d;
     },

@@ -97,6 +97,17 @@ namespace Overscan
 
         private CursorVisual _visual = CursorVisual.Native;
 
+        /// <summary>
+        /// Overscan BR: whether the pointer is showing "OK presses something here".
+        /// The page answers that on every move (see <c>kindAt</c> in
+        /// <see cref="PageScript"/>), and the drawn pointer turns blue for it, so a
+        /// button can be aimed at rather than guessed at: the pointer says so before
+        /// OK does or does not do anything.
+        /// </summary>
+        private bool _lit;
+
+        private static readonly Color RingDark = new Color(0f, 0f, 0f, 0.88f);
+
         public NuiCursor(Window window, WebView web)
         {
             _web = web;
@@ -104,7 +115,7 @@ namespace Overscan
 
             try
             {
-                _ring = Blob(RingSize, new Color(0f, 0f, 0f, 0.88f));
+                _ring = Blob(RingSize, RingDark);
                 _body = Blob(BodySize, NuiTheme.Ink);
                 _core = Blob(CoreSize, NuiTheme.Accent);
                 _built = true;
@@ -216,6 +227,7 @@ namespace Overscan
             // results back through EvaluateJavaScript callbacks, so the name is
             // only used for the (unused) postMessage path.
             _movePending = false;
+            Light(false);
             Apply(true);
         }
 
@@ -508,6 +520,10 @@ namespace Overscan
                         {
                             DiagLog.Add("scroll " + (direction < 0 ? "up" : "down") + " -> " + result);
                         }
+
+                        // Overscan BR: the page moved under a pointer that did not,
+                        // so what it is over (and the blue it shows) is asked again.
+                        MoveInPage();
                     });
             }
             catch (Exception ex)
@@ -518,7 +534,50 @@ namespace Overscan
 
         private void MoveInPage()
         {
-            Eval("try{window." + PageScript.Namespace + ".move(" + F(_x) + "," + F(_y) + ");}catch(e){}");
+            // Overscan BR: the move comes back with what a press would do there
+            // ('c', 'n', 'f' or nothing), and the pointer shows it. A frame from
+            // another origin stays unlit: what is inside it cannot be seen from
+            // here, and a pointer that lit up over the whole of a player would be
+            // telling the user nothing.
+            try
+            {
+                _web.EvaluateJavaScript(
+                    "(function(){try{return String(window." + PageScript.Namespace + ".move(" +
+                    F(_x) + "," + F(_y) + ")||'');}catch(e){return '';}})()",
+                    result =>
+                    {
+                        string kind = (result ?? string.Empty).Trim().Trim('"');
+                        Light(kind == "c" || kind == "n");
+                    });
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("eval failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Turns the drawn pointer blue over something OK would press, and back.
+        /// The ring takes the accent and the centre goes dark, so the change reads
+        /// from across a room on a light page and on a dark one.
+        /// </summary>
+        private void Light(bool lit)
+        {
+            if (!_built || lit == _lit)
+            {
+                return;
+            }
+
+            _lit = lit;
+            try
+            {
+                _ring.BackgroundColor = lit ? NuiTheme.Accent : RingDark;
+                _core.BackgroundColor = lit ? RingDark : NuiTheme.Accent;
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("could not light the pointer: " + ex.Message);
+            }
         }
 
         private void Eval(string script)

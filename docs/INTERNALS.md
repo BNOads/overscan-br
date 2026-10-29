@@ -4465,6 +4465,73 @@ through. Not yet measured on the set: whether the resident size actually drops.
 `NaturalSize2D` instead of fixed columns (fallback to fixed sizes if the toolkit
 answers zero). Not yet seen on the set.
 
+## Overscan BR 1.3.0: a press modern pages hear, a pointer that says so, and the HLS answer
+
+Asked about after "some buttons are hard to press" and "the stream gives an error",
+on the QEF1 (Tizen 9.0). The trail of the evening had no click into a frame and no
+media line at all, so the readings below came from a test page served from a Mac
+(`python3 -m http.server`, results sent back as `new Image().src="/log?..."`),
+legal test streams only.
+
+**Native HLS does not play, and the engine says it does.** `canPlayType('application/vnd.apple.mpegurl')`
+answers `maybe`; Apple's bipbop variant playlist set as a plain `src` ends in
+`error code 4` 0.4 s in and `play()` rejects with `NotSupportedError`. The same
+stream through hls.js 1.5.15 (Media Source) plays unmuted, switches levels and
+runs to the end of the window. Mux's 1080p test stream through hls.js plays too,
+with five `bufferFullError` (QuotaExceededError on `appendBuffer`), all
+non-fatal: hls.js shrinks its buffer and carries on. `navigator.userActivation`
+reads active on a page nobody pressed anything on, so autoplay with sound is not
+what blocks players here. 1.3.0 answers `canPlayType` for any `mpegurl` type with
+`''`, which is desktop Chrome 120's answer and so the answer the forced user agent
+promises, and players written "native if the browser says so, hls.js otherwise"
+take the road that works. `NuiHlsAnswer`; the first answer on a page goes to the
+trail as `guard: canPlayType(...) answered no ..., N ms into the page`, which says
+whether it was in time.
+
+**In time is the point**, so that script and the empty-sound guard are now also
+evaluated from `UrlChanged` and `PageLoading` (at most three times per load,
+counter reset in `PageLoadStarted`), not only from `PageLoadFinished`. Both are
+idempotent. These are page evaluations, the same kind of call load finished has
+always made; nothing on the engine is touched from those events. Not yet measured
+on the set: how many ms into a page the early evaluation lands.
+
+**The press now carries pointer events.** `fire()` used to dispatch
+`mousedown`/`mouseup`/`click` only. Pages that open menus on `pointerdown`, or
+players whose controls answer `pointerup`, never saw a press at all. `press()` sends
+`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click` (chromium's order for a
+mouse), and a page that cancels `pointerdown` gets no `mousedown`/`mouseup`, as with
+a real mouse. Hover sends `pointerover`/`pointerenter`/`pointermove`/`pointerout`/
+`pointerleave` beside the mouse ones. Still `isTrusted=false`: a page that checks it
+is out of reach without the inspector, which stays scoped to frames (see *The port is
+opened for the captcha, not for the evening*).
+
+**A press just beside a button goes to the button.** When the hit has no
+interactive ancestor, does not look clickable (`cursor:pointer` on it or up to five
+ancestors), and is not a surface (`video`, `canvas`, `audio`, a frame), `nearby()`
+hit-tests eight directions at 12 px and then 24 px and presses the first pressable
+thing found. Never inside a frame. The click result says `(near TAG)` when it
+happened.
+
+**The drawn pointer turns blue over something OK would press.** `move()` now returns
+`c` (pressable), `n` (pressable just beside), `f` (another origin's frame) or `''`;
+`NuiCursor` reads it back from the evaluation it already sent once a tick and lights
+the ring for `c` and `n`. A frame stays unlit, because its inside cannot be seen.
+The answer is asked again after a scroll.
+
+**"Abrir só o player"** (menu, and `/acao?id=player`) opens the frame under the
+pointer, or the largest frame covering more than 6% of the screen, as the page
+itself. The streaming embeds that prompted this sit two cross-origin frames deep,
+where nothing above reaches; opened on their own they get the HLS answer, the guard
+and the clean fullscreen. A site that refuses to be opened outside its embedder is
+the site's choice.
+
+`tools/pointer` passes on the new script (run by hand on macOS: the harness's
+`sed` is GNU's). The press order, the cancelled `pointerdown`, the press beside a
+16 px button, a `cursor:pointer` card keeping its own press, a press on a video
+staying there, the `FRAME:` report, the HLS answer leaving `video/mp4` alone and
+the frame picked by "Abrir só o player" were checked in desktop chrome against the
+shipping sources.
+
 ## Emulator notes
 
 - **The TV emulator needs a modern `-cpu` model or it panics.** With the default

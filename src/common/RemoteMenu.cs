@@ -73,6 +73,7 @@ namespace Overscan
         public const string ActionMainMenu = "mainmenu";
         public const string ActionRemoteCard = "remotecard";
         public const string ActionVideoFullscreen = "videofull";
+        public const string ActionOpenPlayer = "openplayer";
 
         private readonly Item[] _items;
         private int _index;

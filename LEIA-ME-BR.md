@@ -14,6 +14,7 @@ Instala ao lado de qualquer outro app: aparece na TV como **Overscan BR**.
 - **Ponteiro que avisa:** fica azul quando está em cima de algo que o OK aperta. Um OK que cai a poucos pixels de um botão vai para o botão.
 - **Abrir só o player:** no menu. Quando o vídeo está num quadro de outro site, abre esse quadro como a página, onde o navegador consegue ajudar (tela cheia limpa e o vídeo pelo caminho que funciona na TV).
 - **Controle pelo computador:** abra um site ou acione favoritos, letra, tela cheia e menu a partir do computador, na mesma rede de casa (veja abaixo).
+- **Vídeo que se ajeita sozinho:** em toda página o navegador acha o vídeo principal, dá o play, e se ele travar tenta outra fonte da página (Opção 2, 3...), recarrega o vídeo e, por último, a página. Veja "Vídeo: política P2P" abaixo.
 - Bloqueio de anúncios ligado, como no original.
 
 Se o controle não tiver os botões coloridos, tudo isso também está no menu (segurar OK).
@@ -48,6 +49,33 @@ Só aceita pedidos da rede de casa (endereços privados) e com a chave certa.
 - **Vídeo depende do site.** Isso vem do motor de navegador que a Samsung entrega para apps nas TVs 2025, e acontece igual no Overscan original. Arquivos MP4 simples dão erro de decodificação e o HLS nativo da TV não toca (erro 4); transmissões por hls.js tocam. O Overscan BR avisa os sites que não há HLS nativo, para eles usarem o caminho que funciona, mas isso não alcança players dentro de quadros de outro site (para esses, use Abrir só o player). Para vídeo, os apps oficiais e o navegador da própria Samsung são mais garantidos.
 - Overscan e Overscan BR usam a mesma porta (8081): deixe só um aberto.
 - Feito e testado numa TV Samsung de 2025 (QN55QEF1, Tizen 9.0). Os pacotes para TVs mais antigas do Overscan original não foram alterados.
+
+## Vídeo: política P2P
+
+Muitos players de transmissão ao vivo usam um carregador P2P (WebRTC) que divide o vídeo entre quem está assistindo. No motor da TV esse carregador costuma travar: o player fica esperando os outros espectadores e nunca cai no HLS normal. Algumas transmissões também são recusadas por falta de espaço no buffer da TV.
+
+O Overscan BR resolve isso em duas camadas:
+
+1. **Regras do bloqueio de anúncios** (`src/nui/adurls.txt`): recusa os scripts `*p2p-media-loader*`, `*p2p*.js`, `*webrtc*.js` e `*swarm*.js`. Valem para tudo que a TV baixa, inclusive dentro de quadros de outro site. Seguem o botão do bloqueio de anúncios: desligou o bloqueio no menu, desligou estas regras também.
+2. **Injeção de vídeo** (`src/nui/injection.js`): em cada página, desliga o WebRTC (o carregador vê que não tem suporte e usa o HLS normal), esconde o vídeo secundário pequeno que esses carregadores usam, dá o play no vídeo principal e, se ele travar mais de 8 segundos, segue a cascata: outra fonte da página, recarregar o vídeo, recarregar a página. Depois de duas voltas sem sucesso para, e registra `video: falha total` no relatório da porta 8081.
+
+A política fica no topo do `injection.js`:
+
+```js
+const P2P_POLICY = { default: "block", allow: [], block: [] };
+```
+
+- `default`: o que vale para qualquer site que não está nas listas (`"block"` ou `"allow"`).
+- `allow`: sites onde o navegador não mexe no WebRTC (ex.: uma chamada de vídeo que precise dele).
+- `block`: sites onde o WebRTC é sempre desligado, mesmo com `default: "allow"`.
+
+Os nomes casam pelo final do endereço: `"exemplo.com"` vale para `exemplo.com` e para `player.exemplo.com`. Exemplo liberando um site e bloqueando o resto:
+
+```js
+const P2P_POLICY = { default: "block", allow: ["meet.exemplo.com"], block: [] };
+```
+
+Depois de editar, compile e reinstale (veja "Compilar"). A política só vale onde o script do navegador alcança: a página principal e os quadros do mesmo site. Em quadros de outro site só as regras do item 1 valem; para esses, use **Abrir só o player** no menu.
 
 ## Compilar
 

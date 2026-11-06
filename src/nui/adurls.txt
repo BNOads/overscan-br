@@ -1,0 +1,11 @@
+# Overscan BR: padroes de URL recusados pelo adblock, alem da lista de hosts.
+# Um padrao por linha. "*" vale qualquer trecho; o resto casa letra por letra,
+# sem diferenca de maiuscula. Compara com a URL inteira sem ?query e #fragmento.
+# Seguem o mesmo botao do adblock no menu: desligou o adblock, desligou estes.
+#
+# Video: loaders P2P (WebRTC) que travam o player na TV. Sem eles o player
+# usa o HLS normal. Ver "Video: politica P2P" no LEIA-ME-BR.md.
+*p2p-media-loader*
+*p2p*.js
+*webrtc*.js
+*swarm*.js

@@ -959,6 +959,31 @@ namespace Overscan
             {
                 DiagLog.Add("hls answer failed: " + ex.Message);
             }
+
+            // Overscan BR: and the video injection, for a page InstallEarly missed.
+            InstallVideoInjection();
+        }
+
+        /// <summary>
+        /// Overscan BR: sends src/nui/injection.js into the page. Its own call, so
+        /// a failure there never costs the guards above. See NuiVideoInjection.
+        /// </summary>
+        private void InstallVideoInjection()
+        {
+            string script = NuiVideoInjection.Script();
+            if (string.IsNullOrEmpty(script) || _web == null)
+            {
+                return;
+            }
+
+            try
+            {
+                _web.EvaluateJavaScript(script);
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Add("video injection failed: " + ex.Message);
+            }
         }
 
         /// <summary>
@@ -1000,6 +1025,8 @@ namespace Overscan
             {
                 DiagLog.Add("early install failed: " + ex.Message);
             }
+
+            InstallVideoInjection();
         }
 
         /// <summary>

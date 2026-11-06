@@ -54,6 +54,7 @@ namespace Overscan
         private static readonly byte[] EmptyBody = new byte[0];
 
         private static AdHosts _hosts;
+        private static AdUrls _urls;
         private static volatile bool _enabled;
 
         // Held so the delegate cannot be collected out from under the native side;
@@ -90,6 +91,7 @@ namespace Overscan
             try
             {
                 _hosts = AdHosts.LoadEmbedded();
+                _urls = AdUrls.LoadEmbedded();
 
                 // Built here, on the main thread, and not left to the first request
                 // that happens to be for an ad. A static initialiser that throws
@@ -107,7 +109,7 @@ namespace Overscan
 
                 _callback = OnRequest;
                 context.RegisterHttpRequestInterceptedCallback(_callback);
-                LastResult = "installed, " + _hosts.Count + " hosts, " + clipBytes + "-byte clip";
+                LastResult = "installed, " + _hosts.Count + " hosts, " + _urls.Count + " url rules, " + clipBytes + "-byte clip";
             }
             catch (Exception ex)
             {
@@ -159,6 +161,14 @@ namespace Overscan
                     // in the app rather than in adhosts.txt, which update.sh rewrites.
                     silence = AdSilence.Matches(host);
                     refuse = silence || (_hosts != null && _hosts.Matches(host));
+
+                    // Overscan BR: URL patterns (adurls.txt), for what lives on a
+                    // CDN everyone uses. Asked only when the host list said no.
+                    if (!refuse && _urls != null && _urls.Match(url) != null)
+                    {
+                        refuse = true;
+                        host = "url " + host;
+                    }
                 }
 
                 if (!refuse)

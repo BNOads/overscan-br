@@ -50,6 +50,10 @@ namespace Overscan
         private static readonly HashSet<string> Seen = new HashSet<string>();
         private static int _errorsTrailed;
 
+        // Overscan BR: lines of the video injection put on the trail this page.
+        private const int VideoLineBudget = 40;
+        private static int _videoLines;
+
         /// <summary>The last census, for the report.</summary>
         public static string LastCensus { get; private set; } = "(no video seen yet)";
 
@@ -68,6 +72,7 @@ namespace Overscan
         {
             Seen.Clear();
             _errorsTrailed = 0;
+            _videoLines = 0;
             VideoPlaying = false;
         }
 
@@ -135,6 +140,20 @@ namespace Overscan
             if (text.StartsWith(NuiEmptySoundGuard.Prefix, StringComparison.Ordinal))
             {
                 Breadcrumbs.DropToTrail("guard: " + Trim(text.Substring(NuiEmptySoundGuard.Prefix.Length)));
+                return;
+            }
+
+            // Overscan BR: the video injection's own lines (adopted, stalled, which
+            // fallback step, total failure). On the trail, a budget per page so a
+            // page that stalls all evening cannot bury the rest.
+            if (text.StartsWith(NuiVideoInjection.Prefix, StringComparison.Ordinal))
+            {
+                if (_videoLines < VideoLineBudget)
+                {
+                    _videoLines++;
+                    Breadcrumbs.DropToTrail("video: " + Trim(text.Substring(NuiVideoInjection.Prefix.Length)));
+                }
+
                 return;
             }
 

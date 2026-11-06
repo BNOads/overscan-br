@@ -38,6 +38,10 @@
          a request, so only this package carries the list; the name is what
          AdHosts.LoadEmbedded asks for. tools/adhosts/update.sh refreshes it. -->
     <EmbeddedResource Include="../src/nui/adhosts.txt" LogicalName="Overscan.adhosts.txt" />
+    <!-- Overscan BR: URL patterns for the ad blocker (AdUrls) and the universal
+         video injection (NuiVideoInjection), both read as embedded resources. -->
+    <EmbeddedResource Include="../src/nui/adurls.txt" LogicalName="Overscan.adurls.txt" />
+    <EmbeddedResource Include="../src/nui/injection.js" LogicalName="Overscan.injection.js" />
   </ItemGroup>
 
 </Project>
